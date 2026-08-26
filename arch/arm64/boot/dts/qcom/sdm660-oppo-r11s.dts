@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * OPPO R11s (OPPO_17011, Qualcomm SDM660 / arm64)
+ *
+ * Minimal mainline board DTS derived from live 17011 read-only evidence.
+ * See recon/P2_R11S_MAINLINE_DTS_DESIGN.md for the evidence matrix and
+ * recon/p2_adb_live_dt_complete_20260730_105747/raw_properties for the
+ * live device-tree captures.
+ *
+ * Evidence status:
+ *  - DWC3 child at 0xa800000 is high-speed peripheral, UDC observed
+ *    configured ("configured") at a800000.dwc3 on the connected device.
+ *  - QUSB2 PHY at 0xc012000; live supply phandles resolve to PM660L L1
+ *    (0.925V), PM660 L10 (1.8V PLL), PM660L L7 (3.125V dpdm).
+ *  - eMMC controller identity at c0c4000 is enabled; bootargs select
+ *    c0c4000.sdhci. eMMC rail/pinctrl/timing are NOT board-evidenced yet.
+ *  - Only USB2 high-speed peripheral is targeted; SuperSpeed PHY and
+ *    secondary HSUSB are left disabled.
+ *  - ramoops reserved at 0xa0000000 (4 MiB) for crash capture (2026-08-09,
+ *    early-boot evidence workflow). compatible = "ramoops" (this fork's
+ *    fs/pstore/ram.c dt_match lists only "ramoops", not "linux,ramoops").
+ */
+
+/dts-v1/;
+
+#include "sdm660.dtsi"
+#include "pm660.dtsi"
+#include "pm660l.dtsi"
+
+/ {
+	model = "OPPO R11s";
+	compatible = "oppo,r11s", "qcom,sdm660";
+
+	/* Legacy IDs used by the stock Qualcomm bootloader for DTB selection.
+	 * Values from live 17011 evidence (recon/p0_adb_readonly_.../root_compatible.txt):
+	 * msm-id 0x13d = SDM660, board-id 0x4273 = 17011, pmic-id PM660/PM660L. */
+	qcom,msm-id = <0x13d 0>;
+	qcom,board-id = <8 0 0x4273>;
+	qcom,pmic-id = <0x1001b 0x1011a 0 0
+			0x1001b 0x2001a 0 0
+			0x1001b 0x202001a 0 0>;
+
+	aliases {
+		serial0 = &blsp1_uart2;
+	};
+
+	chosen {
+		stdout-path = "serial0";
+
+		/* Downstream r11s..dts:17014 sets kaslr-seed = <0x00 0x00>; the fork
+		 * enables CONFIG_RANDOMIZE_BASE without a seed, which would make each
+		 * boot randomized. Pin the seed to zero to deterministically disable
+		 * KASLR and keep crash evidence reproducible. */
+		kaslr-seed = <0x0 0x0>;
+	};
+};
+
+&usb3 {
+	status = "okay";
+	qcom,select-utmi-as-pipe-clk;
+};
+
+&usb3_dwc3 {
+	maximum-speed = "high-speed";
+	phys = <&qusb2phy0>;
+	phy-names = "usb2-phy";
+	dr_mode = "peripheral";
+};
+
+&qusb2phy0 {
+	status = "okay";
+
+	vdd-supply = <&vreg_l1b_0p925>;
+	vdda-pll-supply = <&vreg_l10a_1p8>;
+	vdda-phy-dpdm-supply = <&vreg_l7b_3p125>;
+};
+
+/* The three QUSB2 rails are evidenced from the live 17011 device tree:
+ * vdd -> PM660L L1 (0.925V), vdda-pll -> PM660 L10 (1.8V),
+ * vdda-phy-dpdm -> PM660L L7 (3.125V). */
+&rpm_requests {
+	regulators-0 {
+		compatible = "qcom,rpm-pm660l-regulators";
+
+		vreg_l1b_0p925: l1 {
+			regulator-min-microvolt = <800000>;
+			regulator-max-microvolt = <925000>;
+			regulator-enable-ramp-delay = <250>;
+			regulator-allow-set-load;
+		};
+
+		vreg_l7b_3p125: l7 {
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <3125000>;
+			regulator-enable-ramp-delay = <250>;
+		};
+
+		/* Downstream r11s..dts rpm-regulator-ldob4 (pm660l_l4, phandle 0xdd):
+		 * sdhc1 VMMC rail, fixed 2.95V in use; regulator range 1.7-2.95V. */
+		vreg_l4b_2p95: l4 {
+			regulator-min-microvolt = <1700000>;
+			regulator-max-microvolt = <2950000>;
+			regulator-enable-ramp-delay = <250>;
+		};
+	};
+
+	regulators-1 {
+		compatible = "qcom,rpm-pm660-regulators";
+
+		vreg_l10a_1p8: l10 {
+			regulator-min-microvolt = <1780000>;
+			regulator-max-microvolt = <1950000>;
+			regulator-enable-ramp-delay = <250>;
+			regulator-allow-set-load;
+		};
+
+		/* Downstream r11s..dts rpm-regulator-ldoa8 (pm660_l8, phandle 0xde):
+		 * sdhc1 VDD-IO rail, fixed 1.8V in use; regulator range 1.75-1.9V. */
+		vreg_l8a_1p8: l8 {
+			regulator-min-microvolt = <1750000>;
+			regulator-max-microvolt = <1900000>;
+			regulator-enable-ramp-delay = <250>;
+		};
+	};
+};
+
+&sdhc_1 {
+	status = "okay";
+
+	/* Downstream r11s..dts sdhci@c0c4000 bus-speed-mode =
+	 * "HS400_1p8v", "HS200_1p8v", "DDR_1p8v"; rails: vdd-supply =
+	 * pm660l_l4 (phandle 0xdd, fixed 2.95V), vdd-io-supply = pm660_l8
+	 * (phandle 0xde, fixed 1.8V). */
+	mmc-hs400-1_8v;
+	mmc-hs200-1_8v;
+	mmc-ddr-1_8v;
+
+	vmmc-supply = <&vreg_l4b_2p95>;
+	vqmmc-supply = <&vreg_l8a_1p8>;
+};
+
+&blsp1_uart2 {
+	status = "okay";
+};
+
+/* R11s stock PIL layout (live 17011 evidence + official DTB):
+ * fork/jason defaults place adsp/mba/cdsp at different bases; override to the
+ * R11s addresses to avoid PIL collision (same pattern as sdm660-oppo-r11t.dts).
+ */
+/delete-node/ &adsp_region;
+/delete-node/ &mba_region;
+/delete-node/ &cdsp_region;
+
+/ {
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		adsp_region: adsp@92a00000 {
+			reg = <0x0 0x92a00000 0x0 0x2000000>;
+			no-map;
+		};
+
+		mba_region: mba@94a00000 {
+			reg = <0x0 0x94a00000 0x0 0x200000>;
+			no-map;
+		};
+
+		cdsp_region: cdsp@94c00000 {
+			reg = <0x0 0x94c00000 0x0 0x600000>;
+			no-map;
+		};
+
+		ramoops@a0000000 {
+			compatible = "ramoops";
+			reg = <0x0 0xa0000000 0x0 0x400000>;   /* 4 MiB, free gap below mpss-metadata */
+			record-size = <0x20000>;
+			console-size = <0x20000>;
+			ftrace-size = <0x0>;                    /* CONFIG_PSTORE_FTRACE=n */
+			pmsg-size = <0x20000>;
+		};
+	};
+};
+
+/* E3 crash-isolation fix (2026-08-10, DTB-only): fork sdm630.dtsi tz_mem is
+ * 0x86200000 + 0x3300000 (51M, ends 0x89500000) but live 17011 / boot-debug
+ * reserve the same block to 0x8ab00000 (73M, size 0x4900000). The 22 MiB gap
+ * (0x89500000..0x8ab00000) falls inside the removed/no-map tz region, which
+ * the fork kernel trips on before initramfs. Grow tz_mem to the live reserve. */
+&tz_mem {
+	reg = <0x0 0x86200000 0x0 0x4900000>;
+};
+
+/* Boot-window WDT servicing (2026-08-12): the R11s bootloader arms the APSS
+ * boot-window watchdog at 0x17817000. No mainline sdm660 DTS has a watchdog
+ * node, so qcom-wdt.c can't bind -> the WDT is never petted -> ~60s bite ->
+ * download mode (05c6:900e), even for a healthy kernel. boot-debug's DTB
+ * carries qcom,wdt@17817000 and its dmesg shows "MSM Watchdog Initialized".
+ * Use qcom,kpss-wdt (match_data_kpss, WDT_EN @ 0x8) — PROVEN on this device:
+ * the U-Boot debug build with this exact node held >80s with no 900e.
+ * (qcom,kpss-timer was WRONG: it maps to match_data_apcs_tmr WDT_EN @0x40 and
+ * is also claimed by the timer-qcom clocksource.) */
+&soc {
+	watchdog@17817000 {
+		compatible = "qcom,kpss-wdt";
+		reg = <0x0 0x17817000 0x0 0x1000>;
+		interrupts = <0 3 1>;
+		clocks = <&sleep_clk>;
+	};
+};
