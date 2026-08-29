@@ -386,10 +386,18 @@ static int rmi_f12_read_reg_desc_retry(struct rmi_function *fn,
 		if (attempt == 0) {
 			f01 = rmi_find_function(rmi_dev, 0x01);
 			if (f01) {
-				rmi_write(rmi_dev, f01->fd.command_base_addr,
-					  RMI_F12_SOFT_RESET_CMD);
-				dev_warn(&fn->dev,
-					 "soft-resetting sensor before descriptor retry\n");
+				int wret;
+
+				wret = rmi_write(rmi_dev,
+						 f01->fd.command_base_addr,
+						 RMI_F12_SOFT_RESET_CMD);
+				if (wret)
+					dev_warn(&fn->dev,
+						 "soft-reset write failed (%d), retrying descriptor read anyway\n",
+						 wret);
+				else
+					dev_warn(&fn->dev,
+						 "soft-resetting sensor before descriptor retry\n");
 			}
 			msleep(RMI_F12_SETTLE_DELAY_MS);
 		}

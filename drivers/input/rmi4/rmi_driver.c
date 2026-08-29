@@ -666,7 +666,7 @@ static int rmi_pdt_dump_scan(struct rmi_device *rmi_dev)
 		}
 	}
 
-	if (printed > RMI_PDT_DUMP_MAX_ENTRIES)
+	if (printed >= RMI_PDT_DUMP_MAX_ENTRIES)
 		dev_info(&rmi_dev->dev,
 			 "PDT dump truncated, %d entries total\n", printed);
 	return 0;
@@ -1190,11 +1190,13 @@ static int rmi_create_function(struct rmi_device *rmi_dev,
 		/*
 		 * Do not let a single broken/phantom PDT entry kill the
 		 * whole sensor; warn and continue scanning.
+		 * Note: rmi_register_function() already put_device()s fn on
+		 * failure, and rmi_release_function() frees it; do not
+		 * kfree(fn) again here.
 		 */
 		dev_warn(dev,
 			 "Failed to register function device for F%02X (%d), skipping it.\n",
 			 pdt->function_number, error);
-		kfree(fn);
 		return RMI_SCAN_CONTINUE;
 	}
 

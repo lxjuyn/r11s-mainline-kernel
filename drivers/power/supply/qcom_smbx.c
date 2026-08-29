@@ -545,7 +545,7 @@ static int smb_set_current_limit(struct smb_chip *chip, unsigned int val)
 	 */
 	if (chip->batt_info &&
 	    chip->batt_info->constant_charge_current_max_ua > 0)
-		ceiling = chip->batt_info->constant_charge_current_max_ua;
+		ceiling = min(ceiling, (unsigned int)chip->batt_info->constant_charge_current_max_ua);
 
 	if (val > ceiling) {
 		dev_warn(chip->dev,
