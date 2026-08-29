@@ -842,6 +842,16 @@ config DRM_PANEL_SAMSUNG_S6E3FA3
 	  Say Y here if you want to enable support for the Samsung S6E3FA3
 	  1080x1920 command-mode AMOLED panel used on OPPO R11T.
 
+config DRM_PANEL_SAMSUNG_SOFEG01_S
+	tristate "Samsung SOFEG01_S panel driver (OPPO R11s)"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here if you want to enable support for the Samsung SOFEG01_S
+	  1080x2160 command-mode AMOLED panel used on OPPO R11s (17011).
+	  Init sequence transcribed from the stock OPPO 4.4 panel dtsi.
+
 config DRM_PANEL_SAMSUNG_S6E3FA7
 	tristate "Samsung S6E3FA7 panel driver"
 	depends on OF
