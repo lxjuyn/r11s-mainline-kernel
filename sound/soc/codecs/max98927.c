@@ -9,6 +9,8 @@
 #include <linux/acpi.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/cdev.h>
@@ -795,6 +797,42 @@ static void max98927_slot_config(struct i2c_client *i2c,
 		max98927->i_l_slot = 1;
 }
 
+/*
+ * R11s mainline port helper: alias the OPPO R11s downstream DTB supply
+ * property "max989xx_vdd-supply" onto the "vdd-supply" ID the regulator
+ * framework looks up, mirroring the original downstream driver's
+ * devm_regulator_get(dev, "max989xx_vdd").
+ * Source: android_kernel_oppo_sdm660 techpack/audio/asoc/codecs/maxim/
+ * max98927.c (max989xx_vdd-supply in DT).
+ */
+static void max98927_alias_legacy_supply(struct device *dev,
+					 struct device_node *np,
+					 const char *legacy, const char *modern)
+{
+	struct property *src, *prop;
+
+	if (of_property_present(np, modern))
+		return;
+
+	src = of_find_property(np, legacy, NULL);
+	if (!src)
+		return;
+
+	prop = kzalloc(sizeof(*prop), GFP_KERNEL);
+	if (!prop)
+		return;
+
+	prop->name = kstrdup(modern, GFP_KERNEL);
+	prop->value = src->value;
+	prop->length = src->length;
+
+	if (!prop->name || of_add_property(np, prop)) {
+		kfree(prop->name);
+		kfree(prop);
+		dev_warn(dev, "failed to alias %s -> %s\n", legacy, modern);
+	}
+}
+
 static int max98927_i2c_probe(struct i2c_client *i2c)
 {
 
@@ -819,6 +857,10 @@ static int max98927_i2c_probe(struct i2c_client *i2c)
 				max98927->interleave_mode = true;
 	}
 
+	/* R11s: alias the legacy downstream regulator supply name */
+	max98927_alias_legacy_supply(&i2c->dev, i2c->dev.of_node,
+				     "max989xx_vdd-supply", "vdd-supply");
+
 	/* regmap initialization */
 	max98927->regmap
 		= devm_regmap_init_i2c(i2c, &max98927_regmap);
@@ -834,6 +876,29 @@ static int max98927_i2c_probe(struct i2c_client *i2c)
 	if (IS_ERR(max98927->reset_gpio)) {
 		ret = PTR_ERR(max98927->reset_gpio);
 		return dev_err_probe(&i2c->dev, ret, "failed to request GPIO reset pin");
+	}
+
+	/*
+	 * R11s mainline port helper: the OPPO R11s downstream DTB describes
+	 * the reset line as "maxim,98927-reset-gpio" (raw GPIO specifier,
+	 * not a "reset-gpios" property).  Fall back to parsing it through
+	 * the fwnode GPIO descriptor API, as the original downstream driver
+	 * did with of_get_named_gpio(..., "maxim,98927-reset-gpio", 0).
+	 * Source: android_kernel_oppo_sdm660 techpack/audio/asoc/codecs/
+	 * maxim/max98927.c.
+	 *
+	 * v9 integration fix: devm_gpiod_get_from_of_node() was removed
+	 * upstream; use devm_fwnode_gpiod_get() instead.
+	 */
+	if (!max98927->reset_gpio &&
+	    of_property_present(i2c->dev.of_node, "maxim,98927-reset-gpio")) {
+		max98927->reset_gpio = devm_fwnode_gpiod_get(
+			&i2c->dev, of_fwnode_handle(i2c->dev.of_node),
+			"maxim,98927-reset-gpio", 0, GPIOD_OUT_HIGH);
+		if (IS_ERR(max98927->reset_gpio))
+			return dev_err_probe(&i2c->dev,
+				PTR_ERR(max98927->reset_gpio),
+				"failed to get legacy reset gpio\n");
 	}
 
 	if (max98927->reset_gpio) {
@@ -882,6 +947,13 @@ MODULE_DEVICE_TABLE(i2c, max98927_i2c_id);
 #if defined(CONFIG_OF)
 static const struct of_device_id max98927_of_match[] = {
 	{ .compatible = "maxim,max98927", },
+	/*
+	 * R11s mainline port: the OPPO R11s downstream DTB declares the
+	 * speaker PA as "maxim,max98927L" (same silicon family; the
+	 * downstream driver matched it via its own of table).
+	 * Source: R11s DTB sound codec node max989xx@3a.
+	 */
+	{ .compatible = "maxim,max98927L", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, max98927_of_match);

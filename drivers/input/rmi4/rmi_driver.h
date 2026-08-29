@@ -34,19 +34,18 @@
 #define RMI_PDT_INT_SOURCE_COUNT_MASK   0x07
 
 #define PDT_START_SCAN_LOCATION 0x00e9
-#define PDT_END_SCAN_LOCATION	0x0005
+/*
+ * Vendor Synaptics drivers (synaptics_dsx_core.h: PDT_START 0xE9 /
+ * PDT_END 0xD0) only scan the descriptor area 0xE9..0xD0 of each 256-byte
+ * page and stop at the first function-number-0x00 entry.  Legacy sensors
+ * such as the s3508 return phantom/cyclic garbage below that area, so
+ * scanning further down (mainline used to go down to 0x05) fabricates
+ * extra entries (1500+ duplicates observed on the OPPO R11s s3508).
+ */
+#define PDT_END_SCAN_LOCATION	0x00d0
 #define RMI4_END_OF_PDT(id) ((id) == 0x00 || (id) == 0xff)
 
-struct pdt_entry {
-	u16 page_start;
-	u8 query_base_addr;
-	u8 command_base_addr;
-	u8 control_base_addr;
-	u8 data_base_addr;
-	u8 interrupt_source_count;
-	u8 function_version;
-	u8 function_number;
-};
+/* struct pdt_entry is defined in include/linux/rmi.h */
 
 #define RMI_REG_DESC_PRESENSE_BITS	(32 * BITS_PER_BYTE)
 #define RMI_REG_DESC_SUBPACKET_BITS	(37 * BITS_PER_BYTE)

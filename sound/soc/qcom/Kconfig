@@ -179,6 +179,22 @@ config SND_SOC_SDM660_INT
 	  and SDM670 SoC-based systems.
 	  Say Y if you want to use audio devices on these SoCs.
 
+config SND_SOC_SDM660_OPPO_R11S
+	tristate "SoC Machine driver for OPPO R11s (SDM660) boards"
+	depends on QCOM_APR
+	depends on OF
+	select SND_SOC_QDSP6
+	select SND_SOC_QCOM_COMMON
+	select SND_SOC_AK4375
+	select SND_SOC_MAX98927
+	help
+	  This adds the OPPO R11s mainline port audio machine driver:
+	  q6AFE PRIMARY MI2S to AK4376 headphone DAC and SECONDARY MI2S
+	  to MAX98927L speaker PA, routed through q6asm/q6adm. It binds
+	  to the downstream DTB sound node ("qcom,sdm660-asoc-snd") and
+	  defers until the mainline q6/apr subtree is described in the DT.
+	  Say Y if you want to use audio on the OPPO R11s.
+
 config SND_SOC_SDM845
 	tristate "SoC Machine driver for SDM845 boards"
 	depends on QCOM_APR && I2C && SOUNDWIRE

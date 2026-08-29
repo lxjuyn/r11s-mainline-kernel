@@ -26,7 +26,13 @@
 #include "rmi_driver.h"
 
 #define HAS_NONSTANDARD_PDT_MASK 0x40
-#define RMI4_MAX_PAGE 0xff
+/*
+ * Vendor Synaptics RMI4 drivers only service 10 pages
+ * (synaptics_dsx_core.h: PAGES_TO_SERVICE 10).  Scanning all 256
+ * pages (the old RMI4_MAX_PAGE 0xff) is what produced 1536 phantom
+ * PDT entries on the OPPO R11s s3508.
+ */
+#define RMI4_PAGES_TO_SERVICE 10
 #define RMI4_PAGE_SIZE 0x100
 #define RMI4_PAGE_MASK 0xFF00
 
@@ -56,6 +62,9 @@ void rmi_free_function_list(struct rmi_device *rmi_dev)
 	data->f01_container = NULL;
 	data->f34_container = NULL;
 }
+
+static int rmi_create_function(struct rmi_device *rmi_dev,
+			       void *ctx, const struct pdt_entry *pdt);
 
 static int reset_one_function(struct rmi_function *fn)
 {
@@ -547,7 +556,7 @@ int rmi_scan_pdt(struct rmi_device *rmi_dev, void *ctx,
 	int empty_pages = 0;
 	int retval = RMI_SCAN_DONE;
 
-	for (page = 0; page <= RMI4_MAX_PAGE; page++) {
+	for (page = 0; page < RMI4_PAGES_TO_SERVICE; page++) {
 		retval = rmi_scan_pdt_page(rmi_dev, page, &empty_pages,
 					   ctx, callback);
 		if (retval != RMI_SCAN_CONTINUE)
@@ -606,6 +615,240 @@ static bool rmi_pdt_is_sane(const struct rmi_pdt_stats *stats)
 	return stats->has_f01 && stats->has_f12 &&
 	       stats->duplicates == 0 &&
 	       stats->entries <= RMI_PDT_MAX_SANE_ENTRIES;
+}
+
+/*
+ * Raw PDT dump diagnostics: re-read the descriptor area of each page
+ * and print the raw 6 bytes of every entry, so that phantom/cyclic
+ * descriptor streams can be identified from the board log without any
+ * userspace tooling.  Like the vendor driver, stop at the first
+ * end-of-PDT entry.
+ */
+#define RMI_PDT_DUMP_MAX_ENTRIES	24
+
+static int rmi_pdt_dump_scan(struct rmi_device *rmi_dev)
+{
+	int page;
+	int printed = 0;
+	int retval = 0;
+
+	for (page = 0; page < RMI4_PAGES_TO_SERVICE; page++) {
+		u16 page_start = RMI4_PAGE_SIZE * page;
+		u16 addr;
+
+		for (addr = page_start + PDT_START_SCAN_LOCATION;
+		     addr >= page_start + PDT_END_SCAN_LOCATION;
+		     addr -= RMI_PDT_ENTRY_SIZE) {
+			u8 buf[RMI_PDT_ENTRY_SIZE];
+
+			retval = rmi_read_block(rmi_dev, addr, buf,
+						RMI_PDT_ENTRY_SIZE);
+			if (retval < 0) {
+				dev_info(&rmi_dev->dev,
+					 "PDT dump: read at %#06x failed (%d)\n",
+					 addr, retval);
+				return retval;
+			}
+
+			if (RMI4_END_OF_PDT(buf[5])) {
+				dev_info(&rmi_dev->dev,
+					 "PDT dump: end of PDT at %#06x\n",
+					 addr);
+				return 0;
+			}
+
+			if (printed < RMI_PDT_DUMP_MAX_ENTRIES)
+				dev_info(&rmi_dev->dev,
+					 "PDT @%#06x raw %02x %02x %02x %02x %02x %02x fn=%02x\n",
+					 addr, buf[0], buf[1], buf[2],
+					 buf[3], buf[4], buf[5], buf[5]);
+			printed++;
+		}
+	}
+
+	if (printed > RMI_PDT_DUMP_MAX_ENTRIES)
+		dev_info(&rmi_dev->dev,
+			 "PDT dump truncated, %d entries total\n", printed);
+	return 0;
+}
+
+/*
+ * Function numbers served by this driver tree (see the rmi_fNN drivers
+ * in drivers/input/rmi4).  Vendor synaptics_dsx_core.c likewise only
+ * instantiates devices for known functions and silently skips anything
+ * else, which prevents phantom function numbers from a corrupted PDT
+ * from creating ghost devices.
+ */
+static const u8 rmi_known_fns[] = {
+	0x01, 0x03, 0x11, 0x12, 0x1a, 0x1e,
+	0x21, 0x30, 0x34, 0x3a, 0x54, 0x55,
+};
+
+static bool rmi_known_fn(u8 fn)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(rmi_known_fns); i++)
+		if (rmi_known_fns[i] == fn)
+			return true;
+	return false;
+}
+
+static bool rmi_pdt_ascii_ok(const u8 *buf, int len)
+{
+	int i, good = 0;
+
+	for (i = 0; i < len; i++)
+		if (buf[i] >= 0x20 && buf[i] <= 0x7e)
+			good++;
+	return good >= 4;
+}
+
+/*
+ * Fallback for legacy sensors whose PDT never settles (s3508-class):
+ * walk the low register space at plausible PDT entry alignments and
+ * validate each candidate layout against two independent pieces of
+ * evidence:
+ *   score 1: the F01 product id (query_base + 11, 10 bytes) decodes
+ *            as printable ASCII (e.g. "s3508")
+ *   score 2: additionally the F12 query descriptor presence byte
+ *            (query_base) is within the legal size range [1, 35]
+ * The best candidate is stored in data->legacy_pdt and used by the
+ * IRQ counting/function creation helpers instead of re-scanning.
+ */
+#define RMI_PDT_LEGACY_MAX_ENTRIES	8
+#define RMI_PDT_LEGACY_MAX_BASE		0x70
+
+static int rmi_pdt_score_candidate(struct rmi_device *rmi_dev,
+				   const struct pdt_entry *cand, int n)
+{
+	int i, score = 1;
+	int f12 = -1;
+
+	for (i = 0; i < n; i++)
+		if (cand[i].function_number == 0x12) {
+			f12 = i;
+			break;
+		}
+
+	if (f12 >= 0) {
+		u8 presence = 0xff;
+
+		if (!rmi_read(rmi_dev, cand[f12].query_base_addr, &presence) &&
+		    presence >= 1 && presence <= 35)
+			score = 2;
+	}
+
+	return score;
+}
+
+static bool rmi_pdt_candidate_ok(struct rmi_device *rmi_dev,
+				 const struct pdt_entry *cand, int n)
+{
+	DECLARE_BITMAP(seen, 256) = { 0 };
+	bool has_f01 = false, has_f12 = false;
+	int i;
+
+	if (n < 2)
+		return false;
+
+	for (i = 0; i < n; i++) {
+		u8 fn = cand[i].function_number;
+
+		if (!rmi_known_fn(fn))
+			return false;
+		if (test_bit(fn, seen))
+			return false;
+		__set_bit(fn, seen);
+		if (fn == 0x01)
+			has_f01 = true;
+		if (fn == 0x12)
+			has_f12 = true;
+	}
+
+	if (!has_f01 || !has_f12)
+		return false;
+
+	/* The F01 product id must be readable ASCII (e.g. "s3508"). */
+	for (i = 0; i < n; i++) {
+		if (cand[i].function_number == 0x01) {
+			u8 prod[10] = { 0 };
+
+			if (rmi_read_block(rmi_dev,
+					     cand[i].query_base_addr + 11,
+					     prod, sizeof(prod)))
+				return false;
+			if (!rmi_pdt_ascii_ok(prod, sizeof(prod)))
+				return false;
+			break;
+		}
+	}
+
+	return true;
+}
+
+static void rmi_pdt_derive_legacy(struct rmi_device *rmi_dev)
+{
+	struct rmi_driver_data *data = dev_get_drvdata(&rmi_dev->dev);
+	struct pdt_entry best[RMI_PDT_LEGACY_MAX_ENTRIES];
+	int best_n = 0, best_score = 0;
+	u16 base;
+
+	for (base = 0x00; base <= RMI_PDT_LEGACY_MAX_BASE; base += 3) {
+		struct pdt_entry cand[RMI_PDT_LEGACY_MAX_ENTRIES];
+		int n = 0;
+		u16 addr;
+		bool stopped = false;
+
+		for (addr = base;
+		     addr < base + RMI_PDT_ENTRY_SIZE * RMI_PDT_LEGACY_MAX_ENTRIES;
+		     addr += RMI_PDT_ENTRY_SIZE) {
+			if (rmi_read_pdt_entry(rmi_dev, &cand[n], addr))
+				break;
+			if (RMI4_END_OF_PDT(cand[n].function_number)) {
+				stopped = true;
+				break;
+			}
+			if (++n == RMI_PDT_LEGACY_MAX_ENTRIES)
+				break;
+		}
+
+		if (stopped && n >= 2 &&
+		    rmi_pdt_candidate_ok(rmi_dev, cand, n)) {
+			int score = rmi_pdt_score_candidate(rmi_dev, cand, n);
+
+			if (score > best_score) {
+				memcpy(best, cand, n * sizeof(cand[0]));
+				best_n = n;
+				best_score = score;
+			}
+			if (score == 2)
+				break;
+		}
+	}
+
+	if (best_score > 0) {
+		int i;
+
+		memcpy(data->legacy_pdt, best, best_n * sizeof(best[0]));
+		data->legacy_pdt_count = best_n;
+
+		dev_warn(&rmi_dev->dev,
+			 "legacy function map derived (%d entries, score %d):\n",
+			 best_n, best_score);
+		for (i = 0; i < best_n; i++)
+			dev_warn(&rmi_dev->dev,
+				 "  legacy F%02x: q=%#04x cmd=%#04x ctrl=%#04x data=%#04x irqs=%d\n",
+				 best[i].function_number,
+				 best[i].query_base_addr,
+				 best[i].command_base_addr,
+				 best[i].control_base_addr,
+				 best[i].data_base_addr,
+				 best[i].interrupt_source_count);
+	} else {
+		dev_warn(&rmi_dev->dev,
+			 "no valid legacy function map candidate found\n");
+	}
 }
 
 int rmi_read_register_desc(struct rmi_device *d, u16 addr,
@@ -830,6 +1073,10 @@ static int rmi_count_irqs(struct rmi_device *rmi_dev,
 	int *irq_count = ctx;
 	int ret;
 
+	/* Ignore phantom/unknown functions, like vendor RMI drivers. */
+	if (!rmi_known_fn(pdt->function_number))
+		return RMI_SCAN_CONTINUE;
+
 	*irq_count += pdt->interrupt_source_count;
 
 	ret = rmi_check_bootloader_mode(rmi_dev, pdt);
@@ -888,6 +1135,19 @@ static int rmi_create_function(struct rmi_device *rmi_dev,
 
 	rmi_dbg(RMI_DEBUG_CORE, dev, "Initializing F%02X.\n",
 			pdt->function_number);
+
+	/*
+	 * Only known functions get a device, like vendor RMI drivers:
+	 * phantom function numbers from an unstable PDT (e.g. F80/F99
+	 * observed on the s3508) are skipped instead of creating
+	 * ghost devices.
+	 */
+	if (!rmi_known_fn(pdt->function_number)) {
+		dev_warn(dev,
+			 "Unknown function F%02X in PDT, skipping it.\n",
+			 pdt->function_number);
+		return RMI_SCAN_CONTINUE;
+	}
 
 	/*
 	 * Some legacy sensors (e.g. Synaptics s3508 class) return unstable
@@ -1090,7 +1350,7 @@ int rmi_probe_interrupts(struct rmi_driver_data *data)
 	struct fwnode_handle *fwnode = rmi_dev->xport->dev->fwnode;
 	int irq_count = 0;
 	size_t size;
-	int retval;
+	int retval = 0;
 
 	/*
 	 * We need to count the IRQs and allocate their storage before scanning
@@ -1101,10 +1361,24 @@ int rmi_probe_interrupts(struct rmi_driver_data *data)
 	rmi_dbg(RMI_DEBUG_CORE, dev, "%s: Counting IRQs.\n", __func__);
 	data->bootloader_mode = false;
 
-	retval = rmi_scan_pdt(rmi_dev, &irq_count, rmi_count_irqs);
-	if (retval < 0) {
-		dev_err(dev, "IRQ counting failed with code %d.\n", retval);
-		return retval;
+	if (data->legacy_pdt_count > 0) {
+		/*
+		 * The PDT never settled; use the derived legacy function
+		 * map instead of re-reading the (garbage) PDT.
+		 */
+		int i;
+
+		for (i = 0; i < data->legacy_pdt_count; i++)
+			if (rmi_known_fn(data->legacy_pdt[i].function_number))
+				irq_count +=
+					data->legacy_pdt[i].interrupt_source_count;
+	} else {
+		retval = rmi_scan_pdt(rmi_dev, &irq_count, rmi_count_irqs);
+		if (retval < 0) {
+			dev_err(dev, "IRQ counting failed with code %d.\n",
+				retval);
+			return retval;
+		}
 	}
 
 	if (data->bootloader_mode)
@@ -1145,11 +1419,30 @@ int rmi_init_functions(struct rmi_driver_data *data)
 	int retval;
 
 	rmi_dbg(RMI_DEBUG_CORE, dev, "%s: Creating functions.\n", __func__);
-	retval = rmi_scan_pdt(rmi_dev, &irq_count, rmi_create_function);
-	if (retval < 0) {
-		dev_err(dev, "Function creation failed with code %d.\n",
-			retval);
-		goto err_destroy_functions;
+
+	if (data->legacy_pdt_count > 0) {
+		int i;
+
+		for (i = 0; i < data->legacy_pdt_count; i++) {
+			if (!rmi_known_fn(data->legacy_pdt[i].function_number))
+				continue;
+			retval = rmi_create_function(rmi_dev, &irq_count,
+						       &data->legacy_pdt[i]);
+			if (retval < 0) {
+				dev_err(dev,
+					"Legacy function creation failed with code %d.\n",
+					retval);
+				goto err_destroy_functions;
+			}
+		}
+		retval = 0;
+	} else {
+		retval = rmi_scan_pdt(rmi_dev, &irq_count, rmi_create_function);
+		if (retval < 0) {
+			dev_err(dev, "Function creation failed with code %d.\n",
+				retval);
+			goto err_destroy_functions;
+		}
 	}
 
 	if (!data->f01_container) {
@@ -1261,14 +1554,27 @@ static int rmi_driver_probe(struct device *dev)
 				 stats.entries, stats.duplicates,
 				 stats.has_f01, stats.has_f12,
 				 attempt + 1, RMI_PDT_SETTLE_ATTEMPTS);
+			/*
+			 * Dump the raw descriptors so the board log captures
+			 * the phantom/cyclic stream for offline analysis.
+			 */
+			rmi_pdt_dump_scan(rmi_dev);
 			rmi_scan_pdt(rmi_dev, NULL, rmi_initial_reset);
 			mdelay(max_t(u32, pdata->reset_delay_ms,
 				     DEFAULT_RESET_DELAY_MS));
 		}
-		if (attempt == RMI_PDT_SETTLE_ATTEMPTS)
+		if (attempt == RMI_PDT_SETTLE_ATTEMPTS) {
 			dev_warn(dev,
 				 "PDT still unstable after %d resets; continuing anyway.\n",
 				 RMI_PDT_SETTLE_ATTEMPTS);
+			/*
+			 * Derive the function map from the deterministic
+			 * phantom stream (validated against the F01 product
+			 * id and the F12 descriptor) instead of trusting
+			 * the garbage PDT.
+			 */
+			rmi_pdt_derive_legacy(rmi_dev);
+		}
 	}
 
 	retval = rmi_read(rmi_dev, PDT_PROPERTIES_LOCATION, &data->pdt_props);

@@ -535,11 +535,23 @@ static inline int smb_get_current_limit(struct smb_chip *chip,
 static int smb_set_current_limit(struct smb_chip *chip, unsigned int val)
 {
 	unsigned char val_raw;
+	unsigned int ceiling = 4800000;
 
-	if (val > 4800000) {
-		dev_err(chip->dev,
-			"Can't set current limit higher than 4800000uA");
-		return -EINVAL;
+	/*
+	 * Conservative ceiling for rescue/mainline bring-up: never program
+	 * an input current limit above the battery's DT-rated
+	 * constant-charge-current-max, even if userspace asks for more.
+	 * The raw hardware limit (4.8 A) is never exposed by default.
+	 */
+	if (chip->batt_info &&
+	    chip->batt_info->constant_charge_current_max_ua > 0)
+		ceiling = chip->batt_info->constant_charge_current_max_ua;
+
+	if (val > ceiling) {
+		dev_warn(chip->dev,
+			 "Clamping current limit %u to battery-rated %u uA\n",
+			 val, ceiling);
+		val = ceiling;
 	}
 	val_raw = val / CURRENT_SCALE_FACTOR;
 
@@ -996,11 +1008,25 @@ static int smb_probe(struct platform_device *pdev)
 		return dev_err_probe(chip->dev, rc,
 				     "Failed to init status change work\n");
 
-	rc = (chip->batt_info->voltage_max_design_uv - 3487500) / 7500 + 1;
-	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
-				FLOAT_VOLTAGE_SETTING_MASK, rc);
-	if (rc < 0)
-		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
+	/*
+	 * Conservative guard: only program the float voltage when the DT
+	 * battery profile carries a sane value. A missing/corrupt
+	 * voltage-max-design (e.g. -EINVAL) would otherwise be written
+	 * verbatim into FLOAT_VOLTAGE_CFG, risking over-voltage charging.
+	 * Keep the hardware/bootloader default untouched in that case.
+	 */
+	if (chip->batt_info->voltage_max_design_uv >= 3495000 &&
+	    chip->batt_info->voltage_max_design_uv <= 4950000) {
+		rc = (chip->batt_info->voltage_max_design_uv - 3487500) / 7500 + 1;
+		rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
+					FLOAT_VOLTAGE_SETTING_MASK, rc);
+		if (rc < 0)
+			return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
+	} else {
+		dev_warn(chip->dev,
+			 "no sane voltage-max-design (%d uV), keeping HW float voltage default\n",
+			 chip->batt_info->voltage_max_design_uv);
+	}
 
 	rc = smb_init_irq(chip, &irq, "bat-ov", smb_handle_batt_overvoltage);
 	if (rc < 0)

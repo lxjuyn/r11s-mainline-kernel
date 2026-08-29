@@ -1228,6 +1228,15 @@ static void msm8916_wcd_digital_remove(struct platform_device *pdev)
 
 static const struct of_device_id msm8916_wcd_digital_match_table[] = {
 	{ .compatible = "qcom,msm8916-wcd-digital-codec" },
+	/*
+	 * R11s mainline port: the OPPO R11s downstream DTB declares the
+	 * LPASS internal digital codec (@0x152c0000) as
+	 * "qcom,msm-digital-codec"; it is the same msm8916-wcd digital
+	 * codec IP, identical to the one mainline DTs bind with
+	 * "qcom,msm8916-wcd-digital-codec".
+	 * Source: R11s DTB node msm-dig-codec.
+	 */
+	{ .compatible = "qcom,msm-digital-codec" },
 	{ }
 };
 

@@ -10,8 +10,10 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
+#include <linux/slab.h>
 #include <sound/soc.h>
 #include <sound/tlv.h>
 
@@ -86,6 +88,41 @@
 static const char * const supply_names[] = {
 	"avdd", "tvdd"
 };
+
+/*
+ * R11s mainline port helper: the OPPO R11s downstream DTB uses legacy
+ * supply names ("ak4376-tvdd-supply"/"ak4376-avdd-supply", plus "-L8"
+ * variants).  Alias such a legacy property onto the mainline
+ * "<name>-supply" ID the regulator framework looks up.
+ * Source: android_kernel_oppo_sdm660 techpack/audio/asoc/codecs/ak4376
+ */
+static void ak4375_alias_legacy_supply(struct device *dev,
+				       struct device_node *np,
+				       const char *legacy, const char *modern)
+{
+	struct property *src, *prop;
+
+	if (of_property_present(np, modern))
+		return;
+
+	src = of_find_property(np, legacy, NULL);
+	if (!src)
+		return;
+
+	prop = kzalloc(sizeof(*prop), GFP_KERNEL);
+	if (!prop)
+		return;
+
+	prop->name = kstrdup(modern, GFP_KERNEL);
+	prop->value = src->value;
+	prop->length = src->length;
+
+	if (!prop->name || of_add_property(np, prop)) {
+		kfree(prop->name);
+		kfree(prop);
+		dev_warn(dev, "failed to alias %s -> %s\n", legacy, modern);
+	}
+}
 
 struct ak4375_drvdata {
 	struct snd_soc_dai_driver *dai_drv;
@@ -554,6 +591,25 @@ static int ak4375_i2c_probe(struct i2c_client *i2c)
 	for (i = 0; i < ARRAY_SIZE(supply_names); i++)
 		ak4375->supplies[i].supply = supply_names[i];
 
+	/*
+	 * R11s mainline port: rebind legacy OPPO DTB supply properties to
+	 * the mainline IDs so the codec node works unmodified.  Prefer the
+	 * "-L8" variants when the DTB provides them (as on R11s).
+	 */
+	for (i = 0; i < ARRAY_SIZE(supply_names); i++) {
+		char legacy[32];
+
+		snprintf(legacy, sizeof(legacy), "ak4376-%s-L8-supply",
+			 ak4375->supplies[i].supply);
+		ak4375_alias_legacy_supply(&i2c->dev, i2c->dev.of_node, legacy,
+					   ak4375->supplies[i].supply);
+
+		snprintf(legacy, sizeof(legacy), "ak4376-%s-supply",
+			 ak4375->supplies[i].supply);
+		ak4375_alias_legacy_supply(&i2c->dev, i2c->dev.of_node, legacy,
+					   ak4375->supplies[i].supply);
+	}
+
 	ret = devm_regulator_bulk_get(ak4375->dev, ARRAY_SIZE(ak4375->supplies), ak4375->supplies);
 	if (ret < 0) {
 		dev_err(ak4375->dev, "Failed to get regulators: %d\n", ret);
@@ -564,6 +620,37 @@ static int ak4375_i2c_probe(struct i2c_client *i2c)
 	if (IS_ERR(ak4375->pdn_gpiod))
 		return dev_err_probe(ak4375->dev, PTR_ERR(ak4375->pdn_gpiod),
 				     "failed to get pdn\n");
+
+	/*
+	 * R11s mainline port: legacy DTB exposes the PDN line as a bare
+	 * phandle property "ak4376,reset-gpio" instead of "pdn-gpios".
+	 *
+	 * v9 integration fix: devm_gpiod_get_from_of_node() was removed
+	 * upstream; use devm_fwnode_gpiod_get(). A bare-phandle (no gpio
+	 * args cell) property cannot resolve to a usable descriptor, so
+	 * defer instead of failing the whole probe permanently.
+	 */
+	if (!ak4375->pdn_gpiod &&
+	    of_property_present(i2c->dev.of_node, "ak4376,reset-gpio")) {
+		struct gpio_desc *d;
+
+		d = devm_fwnode_gpiod_get(ak4375->dev,
+					 of_fwnode_handle(i2c->dev.of_node),
+					 "ak4376,reset-gpio", 0,
+					 GPIOD_OUT_LOW);
+		if (!IS_ERR(d)) {
+			ak4375->pdn_gpiod = d;
+		} else if (PTR_ERR(d) == -ENOENT) {
+			return dev_err_probe(ak4375->dev, -EPROBE_DEFER,
+				"ak4376,reset-gpio has no usable gpio args\n");
+		} else {
+			return dev_err_probe(ak4375->dev, PTR_ERR(d),
+					     "failed to get legacy pdn gpio\n");
+		}
+	}
+	if (!ak4375->pdn_gpiod)
+		return dev_err_probe(ak4375->dev, -EINVAL,
+				     "no PDN/reset GPIO described in DT\n");
 
 	ret = ak4375_power_on(ak4375);
 	if (ret < 0)
@@ -628,6 +715,8 @@ static void ak4375_i2c_remove(struct i2c_client *i2c)
 static const struct of_device_id ak4375_of_match[] = {
 	{ .compatible = "asahi-kasei,ak4375", .data = &ak4375_drvdata },
 	{ .compatible = "asahi-kasei,ak4376", .data = &ak4376_drvdata },
+	/* R11s mainline port: legacy OPPO downstream DTB compatible */
+	{ .compatible = "akm,ak4376", .data = &ak4376_drvdata },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, ak4375_of_match);

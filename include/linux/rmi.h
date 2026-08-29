@@ -333,6 +333,23 @@ struct rmi4_attn_data {
 	void *data;
 };
 
+/*
+ * Describes one RMI4 function descriptor as found in the sensor's
+ * Page Description Table (PDT).  Defined here (instead of in
+ * rmi_driver.h) because struct rmi_driver_data embeds a table of
+ * these for legacy sensors with a broken PDT scan.
+ */
+struct pdt_entry {
+	u16 page_start;
+	u8 query_base_addr;
+	u8 command_base_addr;
+	u8 control_base_addr;
+	u8 data_base_addr;
+	u8 interrupt_source_count;
+	u8 function_version;
+	u8 function_number;
+};
+
 struct rmi_driver_data {
 	struct list_head function_list;
 
@@ -364,6 +381,17 @@ struct rmi_driver_data {
 
 	struct rmi4_attn_data attn_data;
 	DECLARE_KFIFO(attn_fifo, struct rmi4_attn_data, 16);
+
+	/*
+	 * Legacy s3508-class sensors can return a phantom/cyclic stream
+	 * instead of a real PDT right after power-up/reset.  When such a
+	 * sensor never settles, rmi_pdt_derive_legacy() reconstructs a
+	 * function map from the deterministic stream (validated against
+	 * the F01 product id and F12 descriptor) and the scan-based
+	 * helpers below use this table instead of re-reading the PDT.
+	 */
+	struct pdt_entry legacy_pdt[8];
+	int legacy_pdt_count;
 };
 
 int rmi_register_transport_device(struct rmi_transport_dev *xport);

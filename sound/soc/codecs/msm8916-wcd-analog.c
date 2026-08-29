@@ -1406,6 +1406,15 @@ static int pm8916_wcd_analog_spmi_probe(struct platform_device *pdev)
 
 static const struct of_device_id pm8916_wcd_analog_spmi_match_table[] = {
 	{ .compatible = "qcom,pm8916-wcd-analog-codec", },
+	/*
+	 * R11s mainline port: the OPPO R11s downstream DTB declares the
+	 * PM660L internal analog codec as "qcom,pmic-analog-codec"
+	 * (downstream msm8916-wcd family driver name).  The PM660L codec
+	 * is the same IP the mainline DTs describe as pm8916-wcd, so the
+	 * same driver applies.
+	 * Source: R11s DTB node anlg-cdc@f000.
+	 */
+	{ .compatible = "qcom,pmic-analog-codec", },
 	{ }
 };
 
