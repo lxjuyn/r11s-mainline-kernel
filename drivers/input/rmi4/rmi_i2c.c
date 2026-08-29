@@ -14,6 +14,17 @@
 
 #define BUFFER_SIZE_INCREMENT 32
 
+/*
+ * The stock vendor Synaptics driver retries every I2C transfer up to
+ * 10 times with a 20 ms delay between attempts (SYN_I2C_RETRY_TIMES in
+ * synaptics_dsx_i2c.c). The s3508 sensor on this platform intermittently
+ * NACKs block reads right after reset / during F12 query descriptor
+ * parsing, which makes the retry-less mainline transport fail with
+ * -EIO and aborts the F12 probe. Mirror the vendor retry policy.
+ */
+#define RMI_I2C_RETRY_TIMES 10
+#define RMI_I2C_RETRY_DELAY_MS 20
+
 /**
  * struct rmi_i2c_xport - stores information for i2c communication
  *
@@ -68,12 +79,23 @@ static int rmi_set_page(struct rmi_i2c_xport *rmi_i2c, u8 page)
 {
 	struct i2c_client *client = rmi_i2c->client;
 	u8 txbuf[2] = {RMI_PAGE_SELECT_REGISTER, page};
-	int retval;
+	int retval = -EIO;
+	int retry;
 
-	retval = i2c_master_send(client, txbuf, sizeof(txbuf));
+	for (retry = 0; retry < RMI_I2C_RETRY_TIMES; retry++) {
+		retval = i2c_master_send(client, txbuf, sizeof(txbuf));
+		if (retval == sizeof(txbuf))
+			break;
+		dev_err(&client->dev,
+			"%s: set page failed, retry %d: %d.",
+			__func__, retry + 1, retval);
+		msleep(RMI_I2C_RETRY_DELAY_MS);
+	}
+
 	if (retval != sizeof(txbuf)) {
 		dev_err(&client->dev,
-			"%s: set page failed: %d.", __func__, retval);
+			"%s: set page failed over retry limit: %d.",
+			__func__, retval);
 		return (retval < 0) ? retval : -EIO;
 	}
 
@@ -89,6 +111,7 @@ static int rmi_i2c_write_block(struct rmi_transport_dev *xport, u16 addr,
 	struct i2c_client *client = rmi_i2c->client;
 	size_t tx_size = len + 1;
 	int retval;
+	int retry;
 
 	mutex_lock(&rmi_i2c->page_mutex);
 
@@ -115,11 +138,22 @@ static int rmi_i2c_write_block(struct rmi_transport_dev *xport, u16 addr,
 			goto exit;
 	}
 
-	retval = i2c_master_send(client, rmi_i2c->tx_buf, tx_size);
-	if (retval == tx_size)
-		retval = 0;
-	else if (retval >= 0)
+	for (retry = 0; retry < RMI_I2C_RETRY_TIMES; retry++) {
+		retval = i2c_master_send(client, rmi_i2c->tx_buf, tx_size);
+		if (retval == tx_size)
+			break;
+		dev_err(&client->dev,
+			"%s: write failed, retry %d: %d.\n",
+			__func__, retry + 1, retval);
+		msleep(RMI_I2C_RETRY_DELAY_MS);
+	}
+	if (retry == RMI_I2C_RETRY_TIMES) {
+		dev_err(&client->dev,
+			"%s: write failed over retry limit.\n", __func__);
 		retval = -EIO;
+	} else {
+		retval = 0;
+	}
 
 exit:
 	rmi_dbg(RMI_DEBUG_XPORT, &client->dev,
@@ -138,6 +172,7 @@ static int rmi_i2c_read_block(struct rmi_transport_dev *xport, u16 addr,
 	struct i2c_client *client = rmi_i2c->client;
 	u8 addr_offset = addr & 0xff;
 	int retval;
+	int retry;
 	struct i2c_msg msgs[] = {
 		{
 			.addr	= client->addr,
@@ -160,11 +195,22 @@ static int rmi_i2c_read_block(struct rmi_transport_dev *xport, u16 addr,
 			goto exit;
 	}
 
-	retval = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
-	if (retval == ARRAY_SIZE(msgs))
-		retval = 0; /* success */
-	else if (retval >= 0)
+	for (retry = 0; retry < RMI_I2C_RETRY_TIMES; retry++) {
+		retval = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
+		if (retval == ARRAY_SIZE(msgs))
+			break;
+		dev_err(&client->dev,
+			"%s: read failed, retry %d: %d.\n",
+			__func__, retry + 1, retval);
+		msleep(RMI_I2C_RETRY_DELAY_MS);
+	}
+	if (retry == RMI_I2C_RETRY_TIMES) {
+		dev_err(&client->dev,
+			"%s: read failed over retry limit.\n", __func__);
 		retval = -EIO;
+	} else {
+		retval = 0; /* success */
+	}
 
 exit:
 	rmi_dbg(RMI_DEBUG_XPORT, &client->dev,
