@@ -557,6 +557,57 @@ int rmi_scan_pdt(struct rmi_device *rmi_dev, void *ctx,
 	return retval < 0 ? retval : 0;
 }
 
+/*
+ * PDT sanity checking for legacy sensors (e.g. Synaptics s3508).
+ *
+ * Right after power-up/reset such sensors intermittently report unstable
+ * PDT contents: the same function number repeated many times and phantom
+ * register base addresses. Building function devices from such a PDT
+ * registers a fn12 whose query_base_addr points at garbage, so the F12
+ * probe dies in rmi_read_register_desc() (size/presence byte > 35,
+ * -EIO) and no 2D sensor input device is ever created.
+ *
+ * A healthy sensor reports each function number exactly once, so count
+ * entries/duplicates and treat anything else as "not settled yet".
+ */
+#define RMI_PDT_SETTLE_ATTEMPTS		3
+#define RMI_PDT_MAX_SANE_ENTRIES	8
+
+struct rmi_pdt_stats {
+	DECLARE_BITMAP(seen, 256);
+	int entries;
+	int duplicates;
+	bool has_f01;
+	bool has_f12;
+};
+
+static int rmi_pdt_collect_stats(struct rmi_device *rmi_dev, void *ctx,
+				 const struct pdt_entry *pdt)
+{
+	struct rmi_pdt_stats *stats = ctx;
+	u8 fn = pdt->function_number;
+
+	stats->entries++;
+	if (test_bit(fn, stats->seen))
+		stats->duplicates++;
+	else
+		__set_bit(fn, stats->seen);
+
+	if (fn == 0x01)
+		stats->has_f01 = true;
+	if (fn == 0x12)
+		stats->has_f12 = true;
+
+	return RMI_SCAN_CONTINUE;
+}
+
+static bool rmi_pdt_is_sane(const struct rmi_pdt_stats *stats)
+{
+	return stats->has_f01 && stats->has_f12 &&
+	       stats->duplicates == 0 &&
+	       stats->entries <= RMI_PDT_MAX_SANE_ENTRIES;
+}
+
 int rmi_read_register_desc(struct rmi_device *d, u16 addr,
 				struct rmi_register_descriptor *rdesc)
 {
@@ -1183,6 +1234,42 @@ static int rmi_driver_probe(struct device *dev)
 	retval = rmi_scan_pdt(rmi_dev, NULL, rmi_initial_reset);
 	if (retval < 0)
 		dev_warn(dev, "RMI initial reset failed! Continuing in spite of this.\n");
+
+	/*
+	 * Wait until the PDT actually looks sane. Legacy sensors may need
+	 * more than one reset after power-up before their firmware stops
+	 * returning phantom/duplicated PDT entries; scanning such a PDT
+	 * would create a broken fn12 (query descriptor parse fails with
+	 * -EIO and the 2D sensor input device is never registered).
+	 */
+	{
+		int attempt;
+
+		for (attempt = 0; attempt < RMI_PDT_SETTLE_ATTEMPTS;
+		     attempt++) {
+			struct rmi_pdt_stats stats = { };
+
+			retval = rmi_scan_pdt(rmi_dev, &stats,
+						rmi_pdt_collect_stats);
+			if (retval < 0)
+				break;
+			if (rmi_pdt_is_sane(&stats))
+				break;
+
+			dev_warn(dev,
+				 "unstable PDT (%d entries, %d duplicates, f01=%d f12=%d), re-resetting sensor, attempt %d/%d\n",
+				 stats.entries, stats.duplicates,
+				 stats.has_f01, stats.has_f12,
+				 attempt + 1, RMI_PDT_SETTLE_ATTEMPTS);
+			rmi_scan_pdt(rmi_dev, NULL, rmi_initial_reset);
+			mdelay(max_t(u32, pdata->reset_delay_ms,
+				     DEFAULT_RESET_DELAY_MS));
+		}
+		if (attempt == RMI_PDT_SETTLE_ATTEMPTS)
+			dev_warn(dev,
+				 "PDT still unstable after %d resets; continuing anyway.\n",
+				 RMI_PDT_SETTLE_ATTEMPTS);
+	}
 
 	retval = rmi_read(rmi_dev, PDT_PROPERTIES_LOCATION, &data->pdt_props);
 	if (retval < 0) {
