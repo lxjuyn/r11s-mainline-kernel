@@ -4,6 +4,7 @@
  */
 #include <linux/input.h>
 #include <linux/input/mt.h>
+#include <linux/delay.h>
 #include <linux/rmi.h>
 #include "rmi_driver.h"
 #include "rmi_2d_sensor.h"
@@ -338,6 +339,65 @@ static int rmi_f12_config(struct rmi_function *fn)
 	return 0;
 }
 
+/*
+ * Legacy sensor (e.g. Synaptics s3508) hardening for F12 register
+ * descriptor reads.
+ *
+ * On these parts the F12 query/control/data descriptor area can read back
+ * garbage shortly after power-up/reset: rmi_read_register_desc() then fails
+ * instantly (size/presence byte > 35, -EIO) without any I2C transport
+ * error (the whole probe aborts within ~100us).  The vendor RMI driver
+ * tolerates such chips by retrying transfers and by parsing the F12 query
+ * registers without depending on descriptors at all.  Here we dump the raw
+ * bytes for diagnostics, soft-reset the sensor through the F01 command
+ * register and retry once.  If the descriptor still does not parse, defer
+ * probing so the sensor gets more time to settle.
+ */
+#define RMI_F12_SOFT_RESET_CMD		0x01
+#define RMI_F12_SETTLE_DELAY_MS		200
+
+static int rmi_f12_read_reg_desc_retry(struct rmi_function *fn,
+				       u16 addr,
+				       struct rmi_register_descriptor *rdesc,
+				       const char *what)
+{
+	struct rmi_device *rmi_dev = fn->rmi_dev;
+	struct rmi_function *f01;
+	u8 raw[4];
+	int ret = -EIO;
+	int attempt;
+
+	for (attempt = 0; attempt < 2; attempt++) {
+		/* Raw bytes at the descriptor location for forensics. */
+		if (!rmi_read_block(rmi_dev, addr, raw, sizeof(raw)))
+			dev_info(&fn->dev,
+				 "%s descriptor @%04x raw bytes (attempt %d): %02x %02x %02x %02x\n",
+				 what, addr, attempt + 1,
+				 raw[0], raw[1], raw[2], raw[3]);
+
+		ret = rmi_read_register_desc(rmi_dev, addr, rdesc);
+		if (!ret)
+			return 0;
+
+		dev_warn(&fn->dev,
+			 "Failed to read the %s Register Descriptor: %d (attempt %d/2)\n",
+			 what, ret, attempt + 1);
+
+		if (attempt == 0) {
+			f01 = rmi_find_function(rmi_dev, 0x01);
+			if (f01) {
+				rmi_write(rmi_dev, f01->fd.command_base_addr,
+					  RMI_F12_SOFT_RESET_CMD);
+				dev_warn(&fn->dev,
+					 "soft-resetting sensor before descriptor retry\n");
+			}
+			msleep(RMI_F12_SETTLE_DELAY_MS);
+		}
+	}
+
+	return ret;
+}
+
 static int rmi_f12_probe(struct rmi_function *fn)
 {
 	struct f12_data *f12;
@@ -393,33 +453,33 @@ static int rmi_f12_probe(struct rmi_function *fn)
 		f12->sensor_pdata = pdata->sensor_pdata;
 	}
 
-	ret = rmi_read_register_desc(rmi_dev, query_addr,
-					&f12->query_reg_desc);
+	ret = rmi_f12_read_reg_desc_retry(fn, query_addr,
+					  &f12->query_reg_desc, "Query");
 	if (ret) {
 		dev_err(&fn->dev,
-			"Failed to read the Query Register Descriptor: %d\n",
+			"Query Register Descriptor unreadable (%d), deferring probe\n",
 			ret);
-		return ret;
+		return -EPROBE_DEFER;
 	}
 	query_addr += 3;
 
-	ret = rmi_read_register_desc(rmi_dev, query_addr,
-						&f12->control_reg_desc);
+	ret = rmi_f12_read_reg_desc_retry(fn, query_addr,
+					  &f12->control_reg_desc, "Control");
 	if (ret) {
 		dev_err(&fn->dev,
-			"Failed to read the Control Register Descriptor: %d\n",
+			"Control Register Descriptor unreadable (%d), deferring probe\n",
 			ret);
-		return ret;
+		return -EPROBE_DEFER;
 	}
 	query_addr += 3;
 
-	ret = rmi_read_register_desc(rmi_dev, query_addr,
-						&f12->data_reg_desc);
+	ret = rmi_f12_read_reg_desc_retry(fn, query_addr,
+					  &f12->data_reg_desc, "Data");
 	if (ret) {
 		dev_err(&fn->dev,
-			"Failed to read the Data Register Descriptor: %d\n",
+			"Data Register Descriptor unreadable (%d), deferring probe\n",
 			ret);
-		return ret;
+		return -EPROBE_DEFER;
 	}
 	query_addr += 3;
 
