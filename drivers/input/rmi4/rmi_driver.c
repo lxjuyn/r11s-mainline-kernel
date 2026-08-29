@@ -838,6 +838,21 @@ static int rmi_create_function(struct rmi_device *rmi_dev,
 	rmi_dbg(RMI_DEBUG_CORE, dev, "Initializing F%02X.\n",
 			pdt->function_number);
 
+	/*
+	 * Some legacy sensors (e.g. Synaptics s3508 class) return unstable
+	 * PDT contents and may report the same function number more than
+	 * once.  Registering a second device with the same name fails with
+	 * -EEXIST, which used to abort the entire sensor probe.  Skip the
+	 * duplicate and keep scanning, like vendor RMI drivers do with
+	 * unknown/duplicate function entries.
+	 */
+	if (rmi_find_function(rmi_dev, pdt->function_number)) {
+		dev_warn(dev,
+			 "Duplicate PDT entry for F%02X, skipping it.\n",
+			 pdt->function_number);
+		return RMI_SCAN_CONTINUE;
+	}
+
 	fn = kzalloc(sizeof(struct rmi_function) +
 			BITS_TO_LONGS(data->irq_count) * sizeof(unsigned long),
 		     GFP_KERNEL);
@@ -860,8 +875,17 @@ static int rmi_create_function(struct rmi_device *rmi_dev,
 		set_bit(fn->irq_pos + i, fn->irq_mask);
 
 	error = rmi_register_function(fn);
-	if (error)
-		return error;
+	if (error) {
+		/*
+		 * Do not let a single broken/phantom PDT entry kill the
+		 * whole sensor; warn and continue scanning.
+		 */
+		dev_warn(dev,
+			 "Failed to register function device for F%02X (%d), skipping it.\n",
+			 pdt->function_number, error);
+		kfree(fn);
+		return RMI_SCAN_CONTINUE;
+	}
 
 	if (pdt->function_number == 0x01)
 		data->f01_container = fn;
