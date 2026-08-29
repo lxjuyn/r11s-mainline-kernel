@@ -196,6 +196,55 @@ static void rmi_i2c_regulator_bulk_disable(void *data)
 			       rmi_i2c->supplies);
 }
 
+/*
+ * If a supply supports voltage enumeration (e.g. RPM/SMD LDOs that would
+ * otherwise enable at an undefined hardware-default voltage), request its
+ * full supported range before enabling. Stock vendor Synaptics drivers
+ * program the rails explicitly (pwr-reg/bus-reg min-max UV); without a
+ * concrete voltage request the sensor may never boot its firmware and
+ * returns garbage over I2C. Fixed-voltage rails do not implement
+ * list_voltage() and are skipped.
+ */
+static int rmi_i2c_regulator_set_voltages(struct rmi_i2c_xport *rmi_i2c)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(rmi_i2c->supplies); i++) {
+		struct regulator *reg = rmi_i2c->supplies[i].consumer;
+		int n = regulator_count_voltages(reg);
+		int min_uV = 0, max_uV = 0;
+		int s, ret;
+
+		if (n <= 0)
+			continue;
+
+		for (s = 0; s < n; s++) {
+			int uV = regulator_list_voltage(reg, s);
+
+			if (uV <= 0)
+				continue;
+			if (!min_uV || uV < min_uV)
+				min_uV = uV;
+			if (uV > max_uV)
+				max_uV = uV;
+		}
+
+		if (!max_uV)
+			continue;
+
+		ret = regulator_set_voltage(reg, min_uV, max_uV);
+		if (ret) {
+			dev_err(&rmi_i2c->client->dev,
+				"failed to set %s supply to %d-%d uV: %d\n",
+				rmi_i2c->supplies[i].supply, min_uV, max_uV,
+				ret);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 static void rmi_i2c_unregister_transport(void *data)
 {
 	struct rmi_i2c_xport *rmi_i2c = data;
@@ -247,6 +296,10 @@ static int rmi_i2c_probe(struct i2c_client *client)
 					 ARRAY_SIZE(rmi_i2c->supplies),
 					 rmi_i2c->supplies);
 	if (error < 0)
+		return error;
+
+	error = rmi_i2c_regulator_set_voltages(rmi_i2c);
+	if (error)
 		return error;
 
 	error = regulator_bulk_enable(ARRAY_SIZE(rmi_i2c->supplies),
