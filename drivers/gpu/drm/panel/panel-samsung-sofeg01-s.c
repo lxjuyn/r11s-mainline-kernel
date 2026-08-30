@@ -412,8 +412,24 @@ static int sofeg01_probe(struct mipi_dsi_device *dsi)
 
 	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(sofeg01_supplies),
 					    sofeg01_supplies, &ctx->supplies);
-	if (ret)
+	if (ret) {
+		/*
+		 * devm_regulator_bulk_get_const() stops at the first failing
+		 * supply, so log the errno of every rail individually to make
+		 * on-device supply debugging unambiguous.
+		 */
+		for (int i = 0; i < ARRAY_SIZE(sofeg01_supplies); i++) {
+			struct regulator *r;
+
+			r = regulator_get(dev, sofeg01_supplies[i].supply);
+			dev_warn(dev, "supply %s: %ld\n",
+				 sofeg01_supplies[i].supply,
+				 IS_ERR(r) ? PTR_ERR(r) : 0);
+			if (!IS_ERR(r))
+				regulator_put(r);
+		}
 		return dev_err_probe(dev, ret, "Failed to get regulators\n");
+	}
 
 	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(ctx->reset_gpio))
