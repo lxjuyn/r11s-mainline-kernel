@@ -991,7 +991,17 @@ static struct clk_rcg2 pclk0_clk_src = {
 		.parent_data = mmcc_xo_dsi0pll_dsi1pll,
 		.num_parents = ARRAY_SIZE(mmcc_xo_dsi0pll_dsi1pll),
 		.ops = &clk_pixel_ops,
-		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
+		/*
+		 * The DSI link paths call clk_set_rate() on the pixel RCG
+		 * *before* the first clk_prepare_enable() reaches the DSI
+		 * PHY PLL (vco prepare) — with the parent off, CMD_UPDATE
+		 * never self-clears and update_config() WARNs with "rcg
+		 * didn't update its configuration".  Let the CCF bring the
+		 * parent PLL up around rate changes (same fix as
+		 * mdp_clk_src).
+		 */
+		.flags = CLK_OPS_PARENT_ENABLE | CLK_SET_RATE_PARENT |
+			 CLK_GET_RATE_NOCACHE,
 	},
 };
 
@@ -1005,7 +1015,10 @@ static struct clk_rcg2 pclk1_clk_src = {
 		.parent_data = mmcc_xo_dsi0pll_dsi1pll,
 		.num_parents = ARRAY_SIZE(mmcc_xo_dsi0pll_dsi1pll),
 		.ops = &clk_pixel_ops,
-		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE,
+		/* See pclk0_clk_src: parent (DSI PLL) must be up for
+		 * CMD_UPDATE to latch. */
+		.flags = CLK_OPS_PARENT_ENABLE | CLK_SET_RATE_PARENT |
+			 CLK_GET_RATE_NOCACHE,
 	},
 };
 
