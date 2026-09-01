@@ -971,6 +971,12 @@ static struct clk_rcg2 mdp_clk_src = {
 		.name = "mdp_clk_src",
 		.parent_data = mmcc_xo_mmpll0_mmpll5_mmpll7_gpll0_gpll0_div,
 		.num_parents = ARRAY_SIZE(mmcc_xo_mmpll0_mmpll5_mmpll7_gpll0_gpll0_div),
+		/*
+		 * The MDP RCG's top frequencies need the MMPLL5 parent; let
+		 * the CCF enable/restore the parent around rate changes so
+		 * CMD_UPDATE can latch even when MMPLL5 is initially off.
+		 */
+		.flags = CLK_OPS_PARENT_ENABLE,
 		.ops = &clk_rcg2_ops,
 	},
 };

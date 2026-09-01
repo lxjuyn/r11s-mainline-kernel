@@ -1308,21 +1308,49 @@ static int dpu_kms_init(struct drm_device *ddev)
 	int ret = 0;
 	unsigned long max_freq = ULONG_MAX;
 
+	/*
+	 * Runtime-PM must be live (and the MDSS GDSC / core clocks on)
+	 * *before* retiming the MDP RCG: on SDM660 the top OPP needs the
+	 * MMPLL5 parent, which cannot latch CMD_UPDATE while its power
+	 * domain is off.  That used to make clk_rcg2 update_config() WARN
+	 * ("rcg didn't update its configuration") and silently return
+	 * -EBUSY here.  dpu_kms->dev must be set first because
+	 * dpu_runtime_resume() dereferences it (encoder list walk).
+	 *
+	 * No matching rpm_put: msm_drv has no runtime-PM management of
+	 * its own, so keeping the display controller resumed for the
+	 * lifetime of the DRM device matches the pre-existing behaviour.
+	 */
+	dpu_kms->dev = ddev;
+
+	pm_runtime_enable(&pdev->dev);
+	dpu_kms->rpm_enabled = true;
+
+	ret = pm_runtime_get_sync(&pdev->dev);
+	if (ret < 0) {
+		pm_runtime_put_noidle(&pdev->dev);
+		DPU_ERROR("runtime resume before clk set failed, ret=%d\n",
+			  ret);
+		return ret;
+	}
+
 	opp = dev_pm_opp_find_freq_floor(dev, &max_freq);
-	if (!IS_ERR(opp))
+	if (!IS_ERR(opp)) {
 		dev_pm_opp_put(opp);
 
-	dev_pm_opp_set_rate(dev, max_freq);
+		ret = dev_pm_opp_set_rate(dev, max_freq);
+		if (ret)
+			DPU_ERROR("failed to set %lu Hz, ret=%d\n",
+				  max_freq, ret);
+	} else {
+		DPU_ERROR("no OPP table for the MDP device\n");
+	}
 
 	ret = msm_kms_init(&dpu_kms->base, &kms_funcs);
 	if (ret) {
 		DPU_ERROR("failed to init kms, ret=%d\n", ret);
 		return ret;
 	}
-	dpu_kms->dev = ddev;
-
-	pm_runtime_enable(&pdev->dev);
-	dpu_kms->rpm_enabled = true;
 
 	return 0;
 }
