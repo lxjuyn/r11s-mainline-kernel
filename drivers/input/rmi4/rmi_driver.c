@@ -874,7 +874,18 @@ int rmi_read_register_desc(struct rmi_device *d, u16 addr,
 		return ret;
 	++addr;
 
-	if (size_presence_reg < 0 || size_presence_reg > 35)
+	/*
+	 * RMI4 spec: a presence size of 0 means "this register descriptor
+	 * is not implemented".  Previously this fell through into a
+	 * zero-length rmi_read_block(), which adapters with the
+	 * I2C_AQ_NO_ZERO_LEN quirk reject with -EOPNOTSUPP *before* any
+	 * bus activity, triggering a pointless 10x retry loop in the
+	 * transport.  Fail fast with a definitive error code instead.
+	 */
+	if (size_presence_reg == 0)
+		return -ENODEV;
+
+	if (size_presence_reg > 35)
 		return -EIO;
 
 	memset(buf, 0, sizeof(buf));

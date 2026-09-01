@@ -187,6 +187,14 @@ static int rmi_i2c_read_block(struct rmi_transport_dev *xport, u16 addr,
 		},
 	};
 
+	/*
+	 * A zero-length read is meaningless and is rejected outright by
+	 * adapters with the I2C_AQ_NO_ZERO_LEN quirk (-EOPNOTSUPP before
+	 * any bus activity).  Fail fast in the transport instead.
+	 */
+	if (!len)
+		return -EINVAL;
+
 	mutex_lock(&rmi_i2c->page_mutex);
 
 	if (RMI_I2C_PAGE(addr) != rmi_i2c->page) {
@@ -199,10 +207,14 @@ static int rmi_i2c_read_block(struct rmi_transport_dev *xport, u16 addr,
 		retval = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
 		if (retval == ARRAY_SIZE(msgs))
 			break;
+		/* Deterministic errors cannot be fixed by retrying. */
+		if (retval == -EOPNOTSUPP || retval == -EINVAL)
+			break;
 		dev_err(&client->dev,
 			"%s: read failed, retry %d: %d.\n",
 			__func__, retry + 1, retval);
-		msleep(RMI_I2C_RETRY_DELAY_MS);
+		if (retry < RMI_I2C_RETRY_TIMES - 1)
+			msleep(RMI_I2C_RETRY_DELAY_MS);
 	}
 	if (retry == RMI_I2C_RETRY_TIMES) {
 		dev_err(&client->dev,

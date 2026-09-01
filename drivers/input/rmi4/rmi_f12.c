@@ -406,6 +406,48 @@ static int rmi_f12_read_reg_desc_retry(struct rmi_function *fn,
 	return ret;
 }
 
+/*
+ * Deferred probing has no per-device retry limit in the driver core.  On
+ * hardware whose descriptors never become readable (observed on Synaptics
+ * s3508: one probe attempt every ~700ms) that means an infinite loop
+ * monopolising the globally serialised deferred probe workqueue at 82-96%
+ * duty cycle.  Cap the descriptor-induced deferrals: after
+ * RMI_F12_MAX_DESC_DEFERS failed probes, give up on F12 entirely.
+ */
+#define RMI_F12_MAX_DESC_DEFERS		3
+
+static int rmi_f12_desc_defer_or_fail(struct rmi_function *fn,
+				      const char *what, int ret)
+{
+	static int defers;
+	static bool gave_up;
+
+	if (++defers < RMI_F12_MAX_DESC_DEFERS) {
+		dev_err(&fn->dev,
+			"%s Register Descriptor unreadable (%d), deferring probe (%d/%d)\n",
+			what, ret, defers, RMI_F12_MAX_DESC_DEFERS);
+		return -EPROBE_DEFER;
+	}
+
+	if (!gave_up) {
+		gave_up = true;
+		/*
+		 * fn12 stays on the function list with its IRQ bit set,
+		 * but after a failed probe our devres data is freed and
+		 * rmi_f12_attention() would dereference a NULL drvdata.
+		 * Disable the F12 IRQ before giving up.
+		 */
+		if (fn->rmi_dev->driver && fn->rmi_dev->driver->clear_irq_bits)
+			fn->rmi_dev->driver->clear_irq_bits(fn->rmi_dev,
+							    fn->irq_mask);
+		dev_err(&fn->dev,
+			"%s Register Descriptor unreadable (%d) after %d probes, giving up: F12 disabled\n",
+			what, ret, defers);
+	}
+
+	return -ENODEV;
+}
+
 static int rmi_f12_probe(struct rmi_function *fn)
 {
 	struct f12_data *f12;
@@ -463,32 +505,20 @@ static int rmi_f12_probe(struct rmi_function *fn)
 
 	ret = rmi_f12_read_reg_desc_retry(fn, query_addr,
 					  &f12->query_reg_desc, "Query");
-	if (ret) {
-		dev_err(&fn->dev,
-			"Query Register Descriptor unreadable (%d), deferring probe\n",
-			ret);
-		return -EPROBE_DEFER;
-	}
+	if (ret)
+		return rmi_f12_desc_defer_or_fail(fn, "Query", ret);
 	query_addr += 3;
 
 	ret = rmi_f12_read_reg_desc_retry(fn, query_addr,
 					  &f12->control_reg_desc, "Control");
-	if (ret) {
-		dev_err(&fn->dev,
-			"Control Register Descriptor unreadable (%d), deferring probe\n",
-			ret);
-		return -EPROBE_DEFER;
-	}
+	if (ret)
+		return rmi_f12_desc_defer_or_fail(fn, "Control", ret);
 	query_addr += 3;
 
 	ret = rmi_f12_read_reg_desc_retry(fn, query_addr,
 					  &f12->data_reg_desc, "Data");
-	if (ret) {
-		dev_err(&fn->dev,
-			"Data Register Descriptor unreadable (%d), deferring probe\n",
-			ret);
-		return -EPROBE_DEFER;
-	}
+	if (ret)
+		return rmi_f12_desc_defer_or_fail(fn, "Data", ret);
 	query_addr += 3;
 
 	sensor = &f12->sensor;
