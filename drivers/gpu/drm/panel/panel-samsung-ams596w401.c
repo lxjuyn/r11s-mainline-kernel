@@ -34,6 +34,7 @@
 #include <linux/backlight.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/regulator/consumer.h>
@@ -441,11 +442,46 @@ ams596w401_create_backlight(struct ams596w401 *ctx)
 					      &ams596w401_bl_ops, &props);
 }
 
+/*
+ * R11s panel auto-detect passthrough: see the comment above
+ * sofeg01_cmdline_selected() in panel-samsung-sofeg01-s.c for the rationale
+ * (only the ABL-named panel may attach, or the DSI host's virtual-channel
+ * configuration gets clobbered).  With no ABL hint this VC1 panel never
+ * attaches (the default is the VC0 panel@0).
+ */
+static bool ams596w401_cmdline_selected(struct mipi_dsi_device *dsi)
+{
+	const char *p = strstr(saved_command_line, "mdss_mdp.panel=");
+	const char *val, *end;
+	const char *token = "ams596";
+
+	if (!p)
+		return dsi->channel == 0;
+
+	val = p + strlen("mdss_mdp.panel=");
+	end = strchr(val, ' ');
+	if (!end)
+		end = val + strlen(val);
+
+	for (; val + strlen(token) <= end; val++)
+		if (!strncmp(val, token, strlen(token)))
+			return true;
+
+	return false;
+}
+
 static int ams596w401_probe(struct mipi_dsi_device *dsi)
 {
 	struct device *dev = &dsi->dev;
 	struct ams596w401 *ctx;
 	int ret;
+
+	if (!ams596w401_cmdline_selected(dsi)) {
+		dev_info(dev,
+			 "not the ABL-selected panel (mdss_mdp.panel=), skipping\n");
+		return -ENODEV;
+	}
+	dev_info(dev, "R11s panel autodetect: selected by ABL cmdline\n");
 
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)

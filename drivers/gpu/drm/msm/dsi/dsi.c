@@ -3,7 +3,111 @@
  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
  */
 
+#include <linux/init.h>
+
+#include <drm/drm_panel.h>
+
 #include "dsi.h"
+
+/*
+ * R11s panel auto-detect passthrough.  The ABL names the attached panel in
+ * mdss_mdp.panel= (downstream LK contract; e.g. "...samsung_sofeg01_s_...").
+ * When that parameter is present, pick the panel bridge whose OF node's
+ * compatible matches the name, instead of hardwiring port@1/ep0.  Panel
+ * nodes that are present in the graph but deliberately unregistered (the
+ * panel drivers gate attach on the same cmdline so they don't clobber the
+ * DSI host's virtual channel) are skipped rather than deferred.
+ *
+ * Returns ERR_PTR(-ENODEV) when there is no ABL hint (caller falls back to
+ * the plain of-graph lookup, i.e. the historical behaviour).
+ */
+static bool r11s_abl_name_in(const char *val, const char *end,
+			     const char *compat)
+{
+	const char *v, *cv;
+
+	/* ABL names use '_' where DT compatibles use '-'; compare ignoring
+	 * '_'/'-' and ',' separators. */
+	for (v = val; v < end; v++) {
+		if (*v == '_' || *v == '-')
+			continue;
+		cv = compat;
+		while (v < end && *cv) {
+			char a = *v, b = *cv;
+
+			if (a == '_' || a == '-') {
+				v++;
+				continue;
+			}
+			if (b == ',' || b == '-') {
+				cv++;
+				continue;
+			}
+			if (a != b)
+				break;
+			v++;
+			cv++;
+		}
+		if (!*cv)
+			return true;
+	}
+	return false;
+}
+
+static struct drm_bridge *r11s_abl_panel_bridge(struct device *dev)
+{
+	const char *p = strstr(saved_command_line, "mdss_mdp.panel=");
+	const char *val, *end;
+	struct device_node *port, *ep;
+	struct drm_panel *panel, *fallback = NULL;
+	struct drm_bridge *bridge = NULL;
+
+	if (!p)
+		return ERR_PTR(-ENODEV);
+
+	val = p + strlen("mdss_mdp.panel=");
+	end = strchr(val, ' ');
+	if (!end)
+		end = val + strlen(val);
+
+	port = of_graph_get_port_by_id(dev->of_node, 1);
+	if (!port)
+		return ERR_PTR(-ENODEV);
+
+	for_each_child_of_node(port, ep) {
+		struct device_node *remote;
+		const char *compat;
+
+		remote = of_graph_get_remote_port_parent(ep);
+		if (!remote)
+			continue;
+
+		panel = of_drm_find_panel(remote);
+		if (IS_ERR(panel)) {
+			of_node_put(remote);
+			continue;	/* gated off / not registered yet */
+		}
+
+		if (!of_property_read_string(remote, "compatible", &compat) &&
+		    r11s_abl_name_in(val, end, compat)) {
+			of_node_put(remote);
+			bridge = devm_drm_panel_bridge_add(dev, panel);
+			break;
+		}
+
+		if (!fallback)
+			fallback = panel;
+		of_node_put(remote);
+	}
+	of_node_put(port);
+
+	if (bridge)
+		return bridge;
+	if (fallback)
+		return devm_drm_panel_bridge_add(dev, fallback);
+
+	return ERR_PTR(-EPROBE_DEFER);
+}
 
 bool msm_dsi_is_cmd_mode(struct msm_dsi *msm_dsi)
 {
@@ -128,8 +232,16 @@ static int dsi_bind(struct device *dev, struct device *master, void *data)
 	    msm_dsi_is_master_dsi(msm_dsi)) {
 		struct drm_bridge *ext_bridge;
 
-		ext_bridge = devm_drm_of_get_bridge(&msm_dsi->pdev->dev,
-						    msm_dsi->pdev->dev.of_node, 1, 0);
+		/*
+		 * With an ABL panel name on the cmdline, let the bootloader
+		 * pick the panel bridge; otherwise keep the plain of-graph
+		 * lookup (port@1/ep0), which is the historical behaviour.
+		 */
+		ext_bridge = r11s_abl_panel_bridge(&msm_dsi->pdev->dev);
+		if (IS_ERR(ext_bridge) && PTR_ERR(ext_bridge) == -ENODEV)
+			ext_bridge = devm_drm_of_get_bridge(&msm_dsi->pdev->dev,
+							    msm_dsi->pdev->dev.of_node,
+							    1, 0);
 		if (IS_ERR(ext_bridge))
 			return PTR_ERR(ext_bridge);
 

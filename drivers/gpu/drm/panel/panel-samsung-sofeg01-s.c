@@ -25,6 +25,7 @@
 #include <linux/backlight.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/regulator/consumer.h>
@@ -400,11 +401,47 @@ static struct backlight_device *sofeg01_create_backlight(struct sofeg01 *ctx)
 					      &sofeg01_bl_ops, &props);
 }
 
+/*
+ * R11s panel auto-detect passthrough: the ABL names the attached panel in
+ * mdss_mdp.panel= (downstream LK contract; the string is visible on any
+ * stock boot's cmdline).  Only the named panel may attach — if a second
+ * panel attached as well, its mipi_dsi_attach() would overwrite the DSI
+ * host's virtual-channel configuration and break the selected one.  With
+ * no ABL hint, default to the VC0 panel (panel@0).
+ */
+static bool sofeg01_cmdline_selected(struct mipi_dsi_device *dsi)
+{
+	const char *p = strstr(saved_command_line, "mdss_mdp.panel=");
+	const char *val, *end;
+	const char *token = "sofeg01";
+
+	if (!p)
+		return dsi->channel == 0;
+
+	val = p + strlen("mdss_mdp.panel=");
+	end = strchr(val, ' ');
+	if (!end)
+		end = val + strlen(val);
+
+	for (; val + strlen(token) <= end; val++)
+		if (!strncmp(val, token, strlen(token)))
+			return true;
+
+	return false;
+}
+
 static int sofeg01_probe(struct mipi_dsi_device *dsi)
 {
 	struct device *dev = &dsi->dev;
 	struct sofeg01 *ctx;
 	int ret;
+
+	if (!sofeg01_cmdline_selected(dsi)) {
+		dev_info(dev,
+			 "not the ABL-selected panel (mdss_mdp.panel=), skipping\n");
+		return -ENODEV;
+	}
+	dev_info(dev, "R11s panel autodetect: selected by ABL cmdline\n");
 
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
