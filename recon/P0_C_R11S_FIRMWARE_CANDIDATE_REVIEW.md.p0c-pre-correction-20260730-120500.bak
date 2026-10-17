@@ -1,0 +1,86 @@
+# P0-C：R11s（无 t、中国大陆公开版）C.19 官方固件容器取证
+
+**复核日期：2026-07-30**  
+**方法：** Tavily MCP 只读网页检索与页面内容提取，并对用户提供 URL 的已下载官方 CDN `.ozip` 原始容器进行主机侧只读 hash/头部 metadata 核验；未解密、未提取 payload、未构建、未连接设备写入。  
+**目标：** OPPO R11s（无 t、中国大陆公开版），实机 `ro.product.model=OPPO R11s`、设备树 board-id `17011`。
+
+## 结论
+
+用户确认该 C.19 是官方固件。此声明与用户提供的 ColorOS CDN URL、对象名、CDN 响应 MD5 和本地完整文件 MD5 相互一致。项目将该**原始 `.ozip` 容器的来源**标为“用户确认的官方固件，且已与 ColorOS CDN 对象逐字节 hash 核对”。该来源结论不自动扩展为已验证 payload 内容、签名链、实机兼容性、回滚可行性或任意设备写入许可。
+
+候选元数据：
+
+| 项目 | 值 | 证据等级 |
+|---|---|---|
+| 型号 | `OPPO - R11s`（页面未写 `R11st`、`CPH1719` 或 `R11s Plus`） | 第三方目录声明 |
+| 版本 | ColorOS 6 正式版 `C.19` / ColorOS 6.0.1 / Android 9.0 | 第三方页面声明 |
+| OTA 包名 | `R11s_11_OTA_1190_all_Vv6yB9efD2ry.ozip` | 第三方页面声明 |
+| OTA 包大小 | 2497.56 MB | 第三方页面声明 |
+| OTA MD5 | `e9aee976b7c4559ae4ca977b727ef117` | 已由同名 ColorOS CDN 对象的 `x-amz-meta-content-md5` 响应元数据与本地完整文件 MD5 交叉核对；不是第三方页面单独证明 |
+| 线刷包名 | `R11s_11_C.19_201031_ad374414.zip` | 两个第三方目录均出现同一文件名 |
+| 线刷包大小 | 约 3.09–3.13 GiB（不同目录显示不一致） | 第三方目录声明，未验证 |
+
+## 证据来源与限制
+
+1. **ColorOS 官方历史 ROM 页面（R11s / C.19 的一手发布记录）**  
+   <https://www.coloros.com/upgrade/rom/145>
+   - Firecrawl MCP 于 2026-07-30 抓取到页面标题 `ColorOS 历史版本下载 - ColorOS 官方网站`，页面明确标示为 `OPPO R11s 手机系统下载`。
+   - 页面明确列出：Android `9.0`、最新版本 `ColorOS 6 正式版-C.19（Android 9）`、更新时间 `2020-12-31`、MD5 `e9aee976b7c4559ae4ca977b727ef117`。
+   - 历史版本列表也列出同一 C.19 条目，标称大小 `2497.56MB`，并列出更早的 A.43 和多个历史版本。
+   - 这建立了 R11s / C.19 / MD5 的 OPPO/ColorOS 官方发布页面证据。抓取文本没有暴露“立即下载”按钮的实际 CDN URL，故 CDN URL 与该页面按钮之间的页面级直接链接仍未由本次抓取取得。
+
+2. **第三方候选页：ONFIX**  
+   <https://onfix.cn/rom/412474>
+   - 明确列出 `OPPO - R11s`、`ColorOS 6 正式版-C.19（Android 9）`、OTA 文件名、大小和 MD5。
+   - 页面自己声明其资源来自公开渠道或网友上传、与品牌方无官方合作或授权，且元数据仅人工整理、可能有偏差。
+   - 结论：可作为**待验证候选与比对锚点**，不是官方来源；MD5 也不是官方校验值。
+
+3. **第三方目录：ONFIX R11s 分类页**  
+   <https://onfix.cn/rom?bid=4&mid=3003>
+   - 明确区分并单列 `R11s`、`R11s Plus`、`R11st`；其中 R11s 条目含 C.19 OTA 和 `R11s_11_C.19_201031_ad374414.zip`。
+   - 分类页同时出现带有不安全绕过工具描述的线刷包条目。这些内容与项目安全边界冲突；本项目不下载、不使用相关工具、脚本或 EDL/9008 路径。
+
+4. **第二个第三方目录：romdevelopers**  
+   <https://romdevelopers.com/index.php?a=downloads&b=tags&tag=OPPO+R11S+Flash+File+Download>
+   - 独立列出同名线刷包 `R11s_11_C.19_201031_ad374414.zip`，体积 3.09 GiB。
+   - 未提供可核验官方来源链、hash 或签名；不能独立证明内容相同，更不能证明原厂性。
+
+## 官方 CDN 交叉核对（2026-07-30）
+
+用户提供的 URL：<https://coloroswebsitefs.coloros.com/coloroswebsite-coloros-com/grs_20201231085845/R11s_11_OTA_1190_all_Vv6yB9efD2ry.ozip>
+
+在带 ColorOS Referer 的 HTTP Range 响应中，服务器返回：
+
+```text
+Content-Range: bytes 0-0/2618885608
+x-amz-meta-content-md5: e9aee976b7c4559ae4ca977b727ef117
+Last-Modified: Thu, 31 Dec 2020 00:59:11 GMT
+```
+
+本地下载文件：
+
+```text
+size:    2618885608
+MD5:     e9aee976b7c4559ae4ca977b727ef117
+SHA-256: a65deb2681255d7e16e0a98a11843ebcb31378d722b5687fd835161902b6ac73
+```
+
+已读取的 `.ozip` 头含 `OPPOENCRYPT!`，并声明 `pre-device=R11s`、`version_name=R11s_11_C.19`、`ota_version=R11s_11.C.19_1190_202010310009`、`google_patch=20200905`。它不是普通 ZIP；未解密或提取 payload，也未验证其尾部对象目录。当前不能依据该容器确认或排除其中任何 `system`、`vendor`、`firmware-update`、`boot`、`recovery`、`vbmeta` 或 `dtbo` 对象，更不能外推实机分区布局、其他原厂包或 AVB 策略。
+
+## 来源状态更新（用户确认，2026-07-30）
+
+- **官方性：** 用户明确确认该 C.19 是官方固件；现有 ColorOS 官方历史 ROM 页面明确列出 OPPO R11s 的 C.19 / Android 9 / 2020-12-31 / MD5 `e9aee976b7c4559ae4ca977b727ef117`。原始容器来自用户提供的 `coloroswebsitefs.coloros.com` URL，本地 MD5 与 CDN 响应的 `x-amz-meta-content-md5` 及官方页面 MD5 三者一致。
+- **证据边界：** 现已具备官方历史发布页与官方 CDN 对象的一致性证据；但页面抓取未取得下载按钮到该 CDN URL 的直接链接，且未独立验证容器内签名或 payload。
+- **操作边界：** 这不授权或实施解锁、fastboot boot、刷写、EDL、分区写入、生成镜像或测试。
+
+## 当前门禁判断
+
+- **已确认：** ColorOS 官方历史 ROM 页面明确发布 OPPO R11s 的 C.19（Android 9、2020-12-31、MD5 `e9aee976b7c4559ae4ca977b727ef117`）；用户提供的同名 ColorOS CDN 原始容器长度和 MD5 与 CDN 响应元数据及官方页面三者一致，包头自称 `pre-device=R11s` / C.19 / 1190。
+- **未确认：** 官方历史 ROM 页面与 CDN 对象之间的直接发布页回链、完整签名链、C.19 是否适配实机 `17011`、线刷包是否与 OTA 同版本同内容、该 OTA 实际数据内容、其签名/manifest 与 payload 的完整性、是否存在/如何实施 AVB 策略。
+- **不能推进：** 不得把任何第三方包视为完成 hash 校验的原厂回滚材料；不得解包后把其中 DTS/分区表当成原厂证据，更不得生成、测试或写入镜像。
+
+## 合规的下一步
+
+1. 已用 Firecrawl MCP 取得 ColorOS 官方 R11s 历史页面的一手发布记录；下一步可在不改动原始容器的前提下，固定解密工具来源与版本，设计主机侧只读 payload 审计流程。实际解密/提取仍须单独记录工具、输出目录和所有产物 hash。
+2. 在完整 payload 审计和明确回滚/启动路径之前，不生成镜像、不运行设备操作。
+

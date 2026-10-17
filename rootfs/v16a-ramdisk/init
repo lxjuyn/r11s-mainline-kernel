@@ -1,0 +1,141 @@
+#!/bin/busybox sh
+# ==========================================================================
+# R11s rescue ramdisk /init — v10 (phase4 rootfs semantics, 2026-08-30)
+# ==========================================================================
+# v10 contract:
+#   * cmdline contains root=<dev> (or root=PARTUUID=<uuid>):
+#       1) bring up the rescue ACM gadget FIRST (18d1:d004 -> /dev/ttyGS0).
+#          The rescue channel stays up for the whole mount attempt, so the
+#          host side can always watch/intervene while we try to boot rootfs.
+#       2) wait for the root block node (rootwait semantics implemented as a
+#          poll/retry loop, ~30 s), then mount it as ext4 rw,noatime.
+#       3) on success: sanity-check /newroot/sbin/init, unbind the rescue
+#          gadget from the UDC (spec PHASE4_ROOTFS_PLAN §6: rootfs side owns
+#          the gadget from here; avoid dual-host on the same function),
+#          move /dev /proc /sys, exec switch_root /newroot /sbin/init.
+#   * cmdline has NO root=  -> legacy v9 behavior, byte-for-byte identical
+#     flow: scan PARTNAME=userdata, mount btrfs subvol=@, same fallbacks.
+#   * EVERY failure path drops into the rescue ACM shell below. This script
+#     never panics and never reboots: a missing/unformatted/damaged root
+#     partition simply yields the same rescue shell as v8/v9 (anti-brick red
+#     line; keep this logic simple and auditable).
+# ==========================================================================
+set -eu
+
+/bin/busybox --install -s /bin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+# phase3 touch v6: debugfs for rescue-shell gpio/pinctrl/regulator forensics
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+
+GADGET_DIR=/sys/kernel/config/usb_gadget/r11t-rescue
+
+# Bring up the ACM gadget and wait for /dev/ttyGS0. Idempotent. Does NOT
+# spawn a shell — caller decides (watch mode during mount attempts, or
+# emergency_shell for the interactive fallback).
+acm_gadget_up() {
+	mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+	mkdir -p "$GADGET_DIR/strings/0x409" "$GADGET_DIR/configs/c.1/strings/0x409"
+	echo 0x18d1 > "$GADGET_DIR/idVendor"
+	echo 0xd004 > "$GADGET_DIR/idProduct"
+	echo r11t-root-failure > "$GADGET_DIR/strings/0x409/serialnumber"
+	echo OPPO > "$GADGET_DIR/strings/0x409/manufacturer"
+	echo 'R11T root mount failure' > "$GADGET_DIR/strings/0x409/product"
+	echo 'Emergency ACM console' > "$GADGET_DIR/configs/c.1/strings/0x409/configuration"
+	mkdir -p "$GADGET_DIR/functions/acm.usb0"
+	[ -e "$GADGET_DIR/configs/c.1/acm.usb0" ] || \
+		ln -s "$GADGET_DIR/functions/acm.usb0" "$GADGET_DIR/configs/c.1/acm.usb0"
+	set -- /sys/class/udc/*
+	[ -e "$1" ] && echo "${1##*/}" > "$GADGET_DIR/UDC"
+	while [ ! -e /dev/ttyGS0 ]; do sleep 1; done
+	stty -F /dev/ttyGS0 raw -echo
+}
+
+# All failure paths converge here: rescue shell on ttyGS0, respawning sh.
+# Never reached by panic/reboot; this init simply falls through to it.
+emergency_shell() {
+	echo "Arch root mount failed: $*" >&2
+	acm_gadget_up
+	exec setsid sh -c 'exec sh < /dev/ttyGS0 > /dev/ttyGS0 2>&1'
+}
+
+# v9 legacy resolver: find the partition whose GPT PARTNAME is "userdata".
+resolve_userdata() {
+	for retry in $(seq 1 150); do
+		for b in /sys/class/block/mmcblk*p*; do
+			[ -r "$b/uevent" ] || continue
+			partname=$(sed -n 's/^PARTNAME=//p' "$b/uevent")
+			[ "$partname" = userdata ] || continue
+			printf '/dev/%s\n' "${b##*/}"
+			return 0
+		done
+		sleep 0.1
+	done
+	return 1
+}
+
+# ---- cmdline: extract root= ----
+# v16a: r11root= 拥有最高优先级。ABL 会在 boot.img cmdline 之后追加自己的
+# root=/dev/dm-0，下方朴素循环“最后出现的 root= 生效”必然选中它，导致
+# 永远等不到 dm-0 而落回救援 shell。r11root= 让打包侧无需与 bootloader 对抗
+# 即可指定真实根分区；缺省时行为与 v10 完全一致（失败路径不变，防砖红线不动）。
+ROOT=
+for w in $(cat /proc/cmdline); do
+	case "$w" in
+		r11root=*) ROOT=${w#r11root=} ;;
+	esac
+done
+if [ -z "$ROOT" ]; then
+	for w in $(cat /proc/cmdline); do
+		case "$w" in
+			root=*) ROOT=${w#root=} ;;
+		esac
+	done
+fi
+
+mkdir -p /newroot
+
+if [ -z "$ROOT" ]; then
+	# ---- legacy (v9) path: zero regression, byte-identical flow ----
+	ROOT_DEV=$(resolve_userdata) || emergency_shell 'userdata partition not found'
+	mount -t btrfs -o rw,noatime,compress=zstd:3,space_cache=v2,subvol=@ \
+		"$ROOT_DEV" /newroot || emergency_shell "cannot mount $ROOT_DEV subvol=@"
+else
+	# ---- v10 path: root= given. Rescue channel FIRST, mount second ----
+	acm_gadget_up
+
+	# Resolve root= to a /dev node (rootwait semantics: poll until it
+	# appears, ~30 s total). Supports /dev/... and PARTUUID=....
+	ROOT_DEV=
+	for retry in $(seq 1 150); do
+		case "$ROOT" in
+		PARTUUID=*)
+			ROOT_DEV=$(findfs "$ROOT" 2>/dev/null || true) ;;
+		*)
+			[ -e "$ROOT" ] && ROOT_DEV=$ROOT ;;
+		esac
+		[ -n "$ROOT_DEV" ] && break
+		sleep 0.2
+	done
+	[ -n "$ROOT_DEV" ] || emergency_shell "root device $ROOT never appeared (~30s)"
+
+	# One mount attempt is enough: if the node exists but the mount fails,
+	# the fs is missing/corrupt right now; retrying gains nothing and the
+	# rescue shell is exactly where we want to be.
+	mount -t ext4 -o rw,noatime "$ROOT_DEV" /newroot \
+		|| emergency_shell "cannot mount root=$ROOT_DEV as ext4"
+fi
+
+[ -x /newroot/sbin/init ] || emergency_shell '/sbin/init is missing'
+
+# v10 only: hand the USB gadget over to the rootfs side before switching
+# root (spec §6: rescue gadget must not keep the UDC bound, else the rootfs
+# cannot own ttyGS0). Harmless no-op on the legacy path (gadget was down).
+[ -f "$GADGET_DIR/UDC" ] && echo > "$GADGET_DIR/UDC" || true
+
+mkdir -p /newroot/dev /newroot/proc /newroot/sys
+mount --move /dev /newroot/dev
+mount --move /proc /newroot/proc
+mount --move /sys /newroot/sys
+exec switch_root /newroot /sbin/init

@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * OPPO R11s (OPPO 17011, Qualcomm SDM660 / arm64) - U-Boot board DTS.
+ *
+ * This is a MINIMAL U-Boot DTS: it only carries what board_f/board_r need
+ * to bring up a console, per U-Boot mach-snapdragon requirements:
+ *   - /memory: must describe REAL RAM. qcom_parse_memory()
+ *     (arch/arm/mach-snapdragon/board.c:115-159) rejects size-0 banks, and
+ *     if both the internal FDT and the ABL FDT lack valid memory it panics
+ *     ("No valid memory ranges found!", board.c:241). The lavender internal
+ *     FDT used previously carries sdm630.dtsi's size-0 memory@80000000
+ *     placeholder, which is why the payload hung pre-console on R11s.
+ *   - stdout-path + blsp1_uart2: automatic pre-reloc UART console
+ *     (serial_msm.c, compatible qcom,msm-uartdm-v1.4).
+ *   - usb3/dwc3 + qusb2phy0: manual serial gadget console (usbacm), toggled
+ *     from the serial_gadget bootmenu. R11s UART2 has no physical pins, so
+ *     this is the primary interactive console.
+ *   - sdhc_1: eMMC for bootflow/rootdev.
+ *
+ * Evidence (see recon/):
+ *   - board-id 17011 = 0x4273, msm-id 317 = 0x13d, pmic-id 0x1001b/0x1011a:
+ *     R11S_THIRD_PARTY_TREE_EVIDENCE.md (third-party 17011 kernel DTS).
+ *   - 4 GiB RAM: live MemTotal 3794076 kB, phys top 0x180000000.
+ *     Downstream 17021 MTP DTS (r11s..dts:17041) declares an 8 GiB layout
+ *     (bank0 0x80000000+0x80000000, bank1 0x100000000+0xfd8c0000); the R11s
+ *     ships 4 GiB, so bank1 is truncated to the physical 2 GiB.
+ *   - qusb2 rails (from live 17011 DT): vdd->PM660L L1 0.925V,
+ *     vdda-pll->PM660 L10 1.8V, vdda-phy-dpdm->PM660L L7 3.125V. U-Boot's
+ *     phy-qcom-qusb2.c does not consume regulators, so they are not wired
+ *     here; re-add once the USB gadget path is reached and rails are proven.
+ *   - splash_region@9d400000 (live DT, size 0x02300000) backs an optional
+ *     simple-framebuffer/vidconsole banner = board_r signal. Geometry is
+ *     the R11s 1080x2160@32bpp panel; TODO: verify against a boot screenshot.
+ */
+
+/dts-v1/;
+
+#include "sdm660.dtsi"
+
+/ {
+	model = "OPPO R11s";
+	compatible = "oppo,r11s", "qcom,sdm660";
+	chassis-type = "handset";
+
+	/* Downstream ABL DT-selection anchors (ABL validates these in the
+	 * appended DTB; U-Boot itself does not read them). */
+	qcom,msm-id = <0x13d 0x0>;
+	qcom,board-id = <0x8 0x0 0x4273>;
+	qcom,pmic-id = <0x1001b 0x1011a 0x0 0x0>;
+
+	aliases {
+		serial0 = &blsp1_uart2;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		stdout-path = "serial0:115200n8";
+
+		framebuffer0: framebuffer@9d400000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0x9d400000 0x0 (1080 * 2160 * 4)>;
+			width = <1080>;
+			height = <2160>;
+			stride = <(1080 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	/* Real 4 GiB RAM, 2 x 2 GiB. Overrides the size-0 placeholder that
+	 * sdm630.dtsi expects the bootloader to patch (we cannot rely on ABL
+	 * patching it for U-Boot). ram_base=0x80000000, ram_size=0x100000000
+	 * -> U-Boot relocates to top-of-RAM 0x17fxxxxx, inside physical RAM. */
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x0 0x80000000 0x0 0x80000000>,
+		      <0x1 0x0 0x0 0x80000000>;
+	};
+
+	/* DEBUG BUILD ONLY: persistent U-Boot console capture.
+	 * CONFIG_CONSOLE_RAMOOPS binds here; survives warm (WDT) reset because
+	 * 0xa0000000 is DRAM and untouched by XBL/UEFI re-entry. Free region,
+	 * verified against the fork reserved-memory audit (recon/FORK_DTS_AUDIT
+	 * and the live 17011 DT: venus ends 0xa0000000, next reserved 0xf6...).
+	 * record-size 0 == no panic dump zones, matching the fork's xiaomi
+	 * jason/whyred ramoops layout (console 2 MiB + pmsg 2 MiB). */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		ramoops: ramoops@a0000000 {
+			compatible = "ramoops";
+			reg = <0x0 0xa0000000 0x0 0x400000>;
+			record-size = <0x0>;
+			console-size = <0x200000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x200000>;
+		};
+	};
+
+	/* DEBUG BUILD ONLY: let U-Boot stop the XBL/UEFI-armed boot-window WDT.
+	 * qcom-wdt (drivers/watchdog/qcom-wdt.c) binds qcom,kpss-wdt and stops
+	 * it in probe (initr_watchdog). SDM660 APSS WDT base 0x17817000 from the
+	 * vendor sdm660.dtsi (qcom,msm-watchdog); sleep_clk is a fixed clock in
+	 * sdm630.dtsi so clk_get_rate() succeeds. Without this node nothing pets
+	 * the WDT and the board warm-resets ~60 s in -> QUSB_BULK 05c6:900e. */
+	watchdog@17817000 {
+		compatible = "qcom,kpss-wdt";
+		reg = <0x0 0x17817000 0x0 0x1000>;
+		clocks = <&sleep_clk>;
+	};
+};
+
+&blsp1_uart2 {
+	status = "okay";
+};
+
+&qusb2phy0 {
+	status = "okay";
+};
+
+&sdhc_1 {
+	status = "okay";
+};
+
+&usb3 {
+	qcom,select-utmi-as-pipe-clk;
+
+	status = "okay";
+};
+
+&usb3_dwc3 {
+	maximum-speed = "high-speed";
+	phys = <&qusb2phy0>;
+	phy-names = "usb2-phy";
+
+	dr_mode = "peripheral";
+};

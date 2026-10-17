@@ -1,0 +1,22 @@
+# 大体积目录一律不入库（产物/备份已有独立归档与 SHA256SUMS）
+backups/
+out/
+build/
+rootfs/
+linux/
+linux-4.19.325/
+android_kernel_oppo_sdm660/
+android_kernel_oppo_sdm660_source_d9391f88aa90/
+
+# 大体积二进制
+*.img
+*.zip
+*.cpio
+*.mbn
+*.ozip
+*.dex
+
+# 临时与生成物
+*.pyc
+__pycache__/
+generated-images/

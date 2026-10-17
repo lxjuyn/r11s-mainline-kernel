@@ -1,0 +1,14 @@
+[Unit]
+Description=R11s first-boot fixup (dpkg reconfigure as real root)
+DefaultDependencies=no
+After=local-fs.target systemd-journald.service
+Before=dbus.service ssh.service NetworkManager.service
+ConditionPathExists=!/var/lib/r11s-firstboot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/r11s-firstboot-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

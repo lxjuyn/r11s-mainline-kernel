@@ -1,0 +1,19 @@
+--- v9.dts	2026-08-30 05:17:56.725779247 +0800
++++ candidate.dts	2026-08-30 05:36:41.757998761 +0800
+@@ -2821,6 +2821,7 @@
+ 			reg = <0x15070000 0x20000>;
+ 			gpio-controller;
+ 			#gpio-cells = <0x02>;
++			#pinctrl-cells = <0x01>;
+ 			gpio-ranges = <0x8e 0x00 0x00 0x20>;
+ 			phandle = <0x8e>;
+ 
+@@ -2919,7 +2920,7 @@
+ 			power-domain-names = "cx";
+ 			qcom,smem-states = <0x93 0x00>;
+ 			qcom,smem-state-names = "stop";
+-			firmware-name = "adsp.mdt";
++			firmware-name = "qcom/sdm660/adsp.mdt";
+ 
+ 			glink-edge {
+ 				interrupts = <0x00 0x9d 0x01>;

@@ -1,0 +1,37 @@
+--- slot / A-B ---
+getvar:current-slot                                FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+getvar:slot-count                                  FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+
+--- has-slot ---
+getvar:has-slot:boot                               FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+getvar:has-slot:system                             FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+
+--- dtbo / vbmeta ---
+getvar:partition-type:dtbo                         FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+getvar:partition-size:dtbo                         FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.002s
+getvar:has-slot:dtbo                               FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+
+--- anti / 版本号 ---
+version-bootloader: 
+Finished. Total time: 0.000s
+version-baseband: 
+Finished. Total time: 0.000s
+getvar:ro.build.version.incremental                FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+getvar:os-version                                  FAILED (remote: 'GetVar Variable Not found')
+Finished. Total time: 0.001s
+
+--- security / unlock ---
+secure: yes
+Finished. Total time: 0.001s
+unlocked: yes
+Finished. Total time: 0.000s
+off-mode-charge: 0
+Finished. Total time: 0.000s

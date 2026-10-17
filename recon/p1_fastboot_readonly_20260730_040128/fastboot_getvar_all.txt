@@ -1,0 +1,156 @@
+(bootloader) hw-revision:10000
+(bootloader) unlocked:yes
+(bootloader) off-mode-charge:0
+(bootloader) charger-screen-enabled:0
+(bootloader) battery-soc-ok:yes
+(bootloader) battery-voltage:4240
+(bootloader) version-baseband:
+(bootloader) version-bootloader:
+(bootloader) erase-block-size: 0x200
+(bootloader) logical-block-size: 0x200
+(bootloader) variant:SDM EMMC
+(bootloader) partition-type:userdata:f2fs
+(bootloader) partition-size:userdata: 0xB95FFC000
+(bootloader) partition-type:storsec:raw
+(bootloader) partition-size:storsec: 0x20000
+(bootloader) partition-type:vendor:raw
+(bootloader) partition-size:vendor: 0x7A100000
+(bootloader) partition-type:system:ext4
+(bootloader) partition-size:system: 0x131300000
+(bootloader) partition-type:cache:ext4
+(bootloader) partition-size:cache: 0x10000000
+(bootloader) partition-type:modem:raw
+(bootloader) partition-size:modem: 0x8000000
+(bootloader) partition-type:vbmetabak:raw
+(bootloader) partition-size:vbmetabak: 0x10000
+(bootloader) partition-type:vbmeta:raw
+(bootloader) partition-size:vbmeta: 0x10000
+(bootloader) partition-type:DRIVER:raw
+(bootloader) partition-size:DRIVER: 0x2000000
+(bootloader) partition-type:LOGO:raw
+(bootloader) partition-size:LOGO: 0x1000000
+(bootloader) partition-type:sti:raw
+(bootloader) partition-size:sti: 0x200000
+(bootloader) partition-type:logdump:raw
+(bootloader) partition-size:logdump: 0x4000000
+(bootloader) partition-type:frp:raw
+(bootloader) partition-size:frp: 0x80000
+(bootloader) partition-type:devcfgbak:raw
+(bootloader) partition-size:devcfgbak: 0x100000
+(bootloader) partition-type:devcfg:raw
+(bootloader) partition-size:devcfg: 0x100000
+(bootloader) partition-type:keystore:raw
+(bootloader) partition-size:keystore: 0x80000
+(bootloader) partition-type:misc:raw
+(bootloader) partition-size:misc: 0x100000
+(bootloader) partition-type:ssd:raw
+(bootloader) partition-size:ssd: 0x2000
+(bootloader) partition-type:fsc:raw
+(bootloader) partition-size:fsc: 0x400
+(bootloader) partition-type:bluetoothbak:raw
+(bootloader) partition-size:bluetoothbak: 0x100000
+(bootloader) partition-type:bluetooth:raw
+(bootloader) partition-size:bluetooth: 0x100000
+(bootloader) partition-type:sec:raw
+(bootloader) partition-size:sec: 0x4000
+(bootloader) partition-type:ddr:raw
+(bootloader) partition-size:ddr: 0x100000
+(bootloader) partition-type:logfs:raw
+(bootloader) partition-size:logfs: 0x800000
+(bootloader) partition-type:toolsfv:raw
+(bootloader) partition-size:toolsfv: 0x100000
+(bootloader) partition-type:limits:raw
+(bootloader) partition-size:limits: 0x1000
+(bootloader) partition-type:splash:raw
+(bootloader) partition-size:splash: 0x20A4000
+(bootloader) partition-type:dpo:raw
+(bootloader) partition-size:dpo: 0x400
+(bootloader) partition-type:msadp:raw
+(bootloader) partition-size:msadp: 0x40000
+(bootloader) partition-type:apdp:raw
+(bootloader) partition-size:apdp: 0x40000
+(bootloader) partition-type:devinfo:raw
+(bootloader) partition-size:devinfo: 0x400
+(bootloader) partition-type:dip:raw
+(bootloader) partition-size:dip: 0x100000
+(bootloader) partition-type:ablbak:raw
+(bootloader) partition-size:ablbak: 0x100000
+(bootloader) partition-type:abl:raw
+(bootloader) partition-size:abl: 0x100000
+(bootloader) partition-type:dspbak:raw
+(bootloader) partition-size:dspbak: 0x1000000
+(bootloader) partition-type:dsp:raw
+(bootloader) partition-size:dsp: 0x1000000
+(bootloader) partition-type:mdtpbak:raw
+(bootloader) partition-size:mdtpbak: 0x2000000
+(bootloader) partition-type:mdtp:raw
+(bootloader) partition-size:mdtp: 0x2000000
+(bootloader) partition-type:mdtpsecappbak:raw
+(bootloader) partition-size:mdtpsecappbak: 0x400000
+(bootloader) partition-type:mdtpsecapp:raw
+(bootloader) partition-size:mdtpsecapp: 0x400000
+(bootloader) partition-type:cmnlib64bak:raw
+(bootloader) partition-size:cmnlib64bak: 0x100000
+(bootloader) partition-type:cmnlibbak:raw
+(bootloader) partition-size:cmnlibbak: 0x100000
+(bootloader) partition-type:cmnlib64:raw
+(bootloader) partition-size:cmnlib64: 0x100000
+(bootloader) partition-type:cmnlib:raw
+(bootloader) partition-size:cmnlib: 0x100000
+(bootloader) partition-type:keymasterbak:raw
+(bootloader) partition-size:keymasterbak: 0x100000
+(bootloader) partition-type:keymaster:raw
+(bootloader) partition-size:keymaster: 0x100000
+(bootloader) partition-type:recovery:raw
+(bootloader) partition-size:recovery: 0x4000000
+(bootloader) partition-type:bootbak:raw
+(bootloader) partition-size:bootbak: 0x4000000
+(bootloader) partition-type:boot:raw
+(bootloader) partition-size:boot: 0x4000000
+(bootloader) partition-type:fsg:raw
+(bootloader) partition-size:fsg: 0x200000
+(bootloader) partition-type:pmicbak:raw
+(bootloader) partition-size:pmicbak: 0x80000
+(bootloader) partition-type:pmic:raw
+(bootloader) partition-size:pmic: 0x80000
+(bootloader) partition-type:hypbak:raw
+(bootloader) partition-size:hypbak: 0x80000
+(bootloader) partition-type:hyp:raw
+(bootloader) partition-size:hyp: 0x80000
+(bootloader) partition-type:rpmbak:raw
+(bootloader) partition-size:rpmbak: 0x80000
+(bootloader) partition-type:rpm:raw
+(bootloader) partition-size:rpm: 0x80000
+(bootloader) partition-type:tzbak:raw
+(bootloader) partition-size:tzbak: 0x400000
+(bootloader) partition-type:tz:raw
+(bootloader) partition-size:tz: 0x400000
+(bootloader) partition-type:xblbak:raw
+(bootloader) partition-size:xblbak: 0x380000
+(bootloader) partition-type:xbl:raw
+(bootloader) partition-size:xbl: 0x380000
+(bootloader) partition-type:reserve4:raw
+(bootloader) partition-size:reserve4: 0x1000000
+(bootloader) partition-type:reserve3:raw
+(bootloader) partition-size:reserve3: 0x200000
+(bootloader) partition-type:reserve2:raw
+(bootloader) partition-size:reserve2: 0x1000000
+(bootloader) partition-type:reserve1:raw
+(bootloader) partition-size:reserve1: 0x200000
+(bootloader) partition-type:persist:raw
+(bootloader) partition-size:persist: 0x2000000
+(bootloader) partition-type:modemst2:raw
+(bootloader) partition-size:modemst2: 0x200000
+(bootloader) partition-type:modemst1:raw
+(bootloader) partition-size:modemst1: 0x200000
+(bootloader) partition-type:oppostanvbk:raw
+(bootloader) partition-size:oppostanvbk: 0xA00000
+(bootloader) partition-type:oppodycnvbk:raw
+(bootloader) partition-size:oppodycnvbk: 0xA00000
+(bootloader) secure:yes
+(bootloader) serialno:<SERIAL>
+(bootloader) product:sdm660
+(bootloader) max-download-size:536870912
+(bootloader) kernel:uefi
+all: 
+Finished. Total time: 0.020s

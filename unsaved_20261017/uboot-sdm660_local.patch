@@ -1,0 +1,66 @@
+diff --git a/drivers/serial/serial_msm.c b/drivers/serial/serial_msm.c
+index ce0da1aa..fbdcdb71 100644
+--- a/drivers/serial/serial_msm.c
++++ b/drivers/serial/serial_msm.c
+@@ -113,6 +113,28 @@ static long msm_uart_clk_init(struct udevice *dev)
+ 	}
+ 
+ 	rate = clk_set_rate(&clk, priv->clk_rate);
++	if (rate < 0)
++		return rate;
++
++	/* DEBUG BUILD ONLY: enable the UART core branch clock. Without it the
++	 * UARTDM block is unclocked, TX_READY never asserts and _serial_putc()
++	 * (serial-uclass.c) spins on -EAGAIN forever at the very first printf
++	 * (board_f.c display_options) -> pre-console hang. Oppo's ABL leaves
++	 * GCC_BLSP1_UART2_APPS_CBCR off because R11s UART2 has no pins. */
++	ret = clk_enable(&clk);
++	if (ret < 0) {
++		pr_warn("%s: Failed to enable core clock: %d\n", __func__, ret);
++		return ret;
++	}
++
++	/* Also gate on the BLSP1 AHB branch clock (GCC_BLSP1_AHB_CBCR). */
++	ret = clk_get_by_name(dev, "iface", &clk);
++	if (ret < 0)
++		return 0;
++
++	ret = clk_enable(&clk);
++	if (ret < 0)
++		pr_warn("%s: Failed to enable iface clock: %d\n", __func__, ret);
+ 
+ 	return rate;
+ }
+diff --git a/drivers/watchdog/qcom-wdt.c b/drivers/watchdog/qcom-wdt.c
+index a8d7e7a7..1d1f25f6 100644
+--- a/drivers/watchdog/qcom-wdt.c
++++ b/drivers/watchdog/qcom-wdt.c
+@@ -121,14 +121,25 @@ static int qcom_wdt_probe(struct udevice *dev)
+ 
+ 	ret = clk_get_by_index(dev, 0, &clk);
+ 	if (ret)
+-		return ret;
+-
++		goto no_clock;
+ 	rate = clk_get_rate(&clk);
+ 	if (rate <= 0)
+-		return rate < 0 ? (int)rate : -EINVAL;
++		goto no_clock;
+ 
+ 	wdt->clk_rate = (ulong)rate;
+ 
++	return qcom_wdt_stop(dev);
++
++no_clock:
++	/* DEBUG BUILD ONLY: no clock provider is resolvable for the APSS WDT
++	 * (SDM660 has no fixed-clock driver, and the qcom GCC driver implements
++	 * no .get_rate). We only ever need to STOP the boot-window WDT that
++	 * XBL/UEFI armed before handing off; the rate is only used if the WDT
++	 * is started again, which U-Boot never does here. Fall back to a nominal
++	 * 32 kHz sleep clock so qcom_wdt_stop() still disables the WDT. */
++	pr_warn("qcom_wdt: no usable clock, assuming 32768 Hz to stop WDT\n");
++	wdt->clk_rate = 32768;
++
+ 	return qcom_wdt_stop(dev);
+ }
+ 

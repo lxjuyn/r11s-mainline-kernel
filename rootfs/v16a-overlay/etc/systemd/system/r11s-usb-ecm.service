@@ -1,0 +1,13 @@
+[Unit]
+Description=R11s configfs ECM USB network gadget (out-of-band SSH channel)
+After=local-fs.target sys-kernel-config.mount
+Wants=sys-kernel-config.mount
+ConditionPathExists=/sys/kernel/config/usb_gadget
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/r11s-usb-ecm.sh
+
+[Install]
+WantedBy=multi-user.target

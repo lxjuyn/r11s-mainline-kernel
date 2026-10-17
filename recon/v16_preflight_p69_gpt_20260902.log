@@ -1,0 +1,34 @@
+
+sh: /: Permission denied
+~ # [6necho V16PREFLIGHT; uptime; echo "=== p69 sysfs partition/start/size ==="; ca
+t /sys/block/mmcblk1/mmcblk1p69/partition /sys/block/mmcblk1/mmcblk1p69/start /s
+ys/block/mmcblk1/mmcblk1p69/size 2>&1; echo "=== GPT header LBA1 (hex) ==="; dd 
+if=/dev/mmcblk1 bs=512 skip=1 count=1 2>/dev/null | od -An -tx1 | head -6; echo 
+"=== GPT entry#69 raw 128B ==="; dd if=/dev/mmcblk1 bs=1 skip=9728 count=128 2>/
+dev/null | od -An -tx1; echo "=== entry#69 name utf16 ==="; dd if=/dev/mmcblk1 b
+s=1 skip=9784 count=72 2>/dev/null | tr -d "\0"; echo; echo ZZDONE_V16PREFLIGHT
+V16PREFLIGHT
+ 15:43:55 up 0 min,  0 users,  load average: 0.14, 0.03, 0.01
+=== p69 sysfs partition/start/size ===
+69
+24950784
+97189888
+=== GPT header LBA1 (hex) ===
+ 45 46 49 20 50 41 52 54 00 00 01 00 5c 00 00 00
+ 7f 8e 46 3d 00 00 00 00 01 00 00 00 00 00 00 00
+ ff bf 47 07 00 00 00 00 22 00 00 00 00 00 00 00
+ de bf 47 07 00 00 00 00 01 aa 27 f9 d1 d3 b4 aa
+ 36 d8 3d 93 d6 b4 3b 1c 02 00 00 00 00 00 00 00
+ 48 00 00 00 80 00 00 00 0e 03 f8 7d 00 00 00 00
+=== GPT entry#69 raw 128B ===
+ af 3d c6 0f 83 84 72 47 8e 79 3d 69 d8 47 7d e4
+ 7e 66 de e3 01 e4 9b 49 8b 95 2e 19 f3 5d 04 fd
+ 00 b8 7c 01 00 00 00 00 ff b7 47 07 00 00 00 00
+ 00 00 00 00 00 00 00 00 75 00 73 00 65 00 72 00
+ 64 00 61 00 74 00 61 00 00 00 00 00 00 00 00 00
+ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+*
+=== entry#69 name utf16 ===
+userdata
+ZZDONE_V16PREFLIGHT
+~ # [6n
